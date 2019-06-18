@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.rc("text", usetex=True)
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
+import matplotlib.animation as animation
 import numpy as np
 import argparse
 
@@ -14,7 +15,7 @@ args = parser.parse_args()
 gamma      = 1.4
 nCells     = 10000
 courantFac = 0.5
-nSteps     = 30000
+nSteps     = 50000
 boxSize    = 5.0
 xDiscont   = 2.0
 P1         = 100.0
@@ -23,6 +24,8 @@ rho1       = 10.0
 rho2       = 1.0
 v1         = 0.0
 v2         = 0.0
+period     = 200
+downsample = 1000
 
 # set initial conditions
 cellRight = int( nCells * xDiscont / boxSize )
@@ -33,7 +36,7 @@ rho[ cellRight:nCells ] = rho2
 v = np.ones(nCells) * v1
 v[ cellRight:nCells ] = v2
 deltax = np.ones(nCells) * boxSize / float(nCells)
-x = ( range(0,nCells) + 0.5 ) * deltax[0]
+x = range(0,nCells) * deltax[0] + 0.5 * deltax[0]
 
 # add ghost cells
 # P = addEdges(P, P[0], P[nCells-1])
@@ -46,10 +49,14 @@ Fface = np.zeros([3,nCells+1])
 cons1 = np.zeros(nSteps)
 cons2 = np.zeros(nSteps)
 cons3 = np.zeros(nSteps)
+rhoAnim = np.zeros([nSteps,nCells])
+vAnim = np.zeros([nSteps,nCells])
+PAnim = np.zeros([nSteps,nCells])
+tAnim = np.zeros(nSteps)
 
 t = 0.0
 
-def addEdges(array, begin, end):
+def addEdges(array, begin, end) :
     con = np.concatenate( ([begin],array,[end]), axis=0 )
     return con
 
@@ -128,6 +135,12 @@ def Riemann(U, gamma, nCells, deltax) :
 
 for i in range(0,nSteps) :
 
+    # save variables for animation
+    rhoAnim[i,:] = rho
+    vAnim[i,:] = v
+    PAnim[i,:] = P
+    tAnim[i] = t
+
     # get energy from EOS
     E = getE(P, gamma, rho, v)
 
@@ -189,35 +202,58 @@ for i in range(0,nSteps) :
     P = PNew
     t = t + minStep
 
-print('done')
-
+print('Done crunching numbers')
+'''
 cons1diff = cons1.max() - cons1.min()
 cons2diff = cons2.max() - cons2.min()
 cons3diff = cons3.max() - cons3.min()
 print('cons1diff:',cons1diff)
 print('cons2diff:',cons2diff)
 print('cons3diff:',cons3diff)
+'''
+rhoAnim = rhoAnim[::downsample,:]
+vAnim = vAnim[::downsample,:]
+PAnim = PAnim[::downsample,:]
+tAnim = tAnim[::downsample]
+nFrames = len(tAnim)
+
+rhoMin = rhoAnim.min()
+rhoMax = rhoAnim.max()
+vMin = vAnim.min()
+vMax = vAnim.max()
+PMin = PAnim.min()
+PMax = PAnim.max()
 
 plt.clf()
-fig = plt.figure()
+fig = plt.figure(figsize=(9,9))
 
-plt.subplot(2,2,1)
-plt.scatter(x,rho,s=1)
-plt.xlabel('x')
-plt.ylabel('density')
-plt.title('t = ' + str(t))
+def animate(i) :
+    plt.clf()
 
-plt.subplot(2,2,2)
-plt.scatter(x,P,s=1)
-plt.xlabel('x')
-plt.ylabel('pressure')
+    plt.subplot(2,2,1)
+    plt.scatter(x,rhoAnim[i,:],s=1)
+    plt.axis([0.0,boxSize,rhoMin,rhoMax])
+    plt.xlabel('x')
+    plt.ylabel('Density')
+    plt.title('t = ' + str(tAnim[i]))
 
-plt.subplot(2,2,3)
-plt.scatter(x,v,s=1)
-plt.xlabel('x')
-plt.ylabel('velocity')
+    plt.subplot(2,2,2)
+    plt.scatter(x,PAnim[i,:],s=1)
+    plt.axis([0.0,boxSize,PMin,PMax])
+    plt.xlabel('x')
+    plt.ylabel('Pressure')
 
-plt.tight_layout()
-saveas = 'hydrout.pdf'
-fig.savefig(saveas)
-print('saved figure ' + saveas)
+    plt.subplot(2,2,3)
+    plt.scatter(x,vAnim[i,:],s=1)
+    plt.axis([0.0,boxSize,vMin,vMax])
+    plt.xlabel('x')
+    plt.ylabel('Velocity')
+
+    plt.tight_layout()
+
+anim = animation.FuncAnimation(fig, animate, frames = nFrames, interval = period, repeat = False)
+saveas = 'hydrout.mp4'
+anim.save(saveas)
+print('Saved animation ' + saveas)
+
+plt.clf()
