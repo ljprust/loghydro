@@ -35,14 +35,21 @@ rho = np.ones(nCells) * rho1
 rho[ cellRight:nCells ] = rho2
 v = np.ones(nCells) * v1
 v[ cellRight:nCells ] = v2
-deltax = np.ones(nCells) * boxSize / float(nCells)
-x = range(0,nCells) * deltax[0] + 0.5 * deltax[0]
+
+def addEdges(array, begin, end) :
+    con = np.concatenate( ([begin],array,[end]), axis=0 )
+    return con
 
 # add ghost cells
-# P = addEdges(P, P[0], P[nCells-1])
-# rho = addEdges(rho, rho[0], rho[nCells-1])
-# v = addEdges(v, -v[0], -v[nCells-1])
-# nCells = nCells + 2
+P = addEdges(P, P[0], P[nCells-1])
+rho = addEdges(rho, rho[0], rho[nCells-1])
+v = addEdges(v, -v[0], -v[nCells-1])
+nCells = nCells + 2
+
+# set positions and widths
+deltax = np.ones(nCells) * boxSize / float(nCells)
+dx = deltax[0]
+x = range(0,nCells) * dx + 0.5 * dx
 
 # initialize some arrays
 Fface = np.zeros([3,nCells+1])
@@ -56,9 +63,14 @@ tAnim = np.zeros(nSteps)
 
 t = 0.0
 
-def addEdges(array, begin, end) :
-    con = np.concatenate( ([begin],array,[end]), axis=0 )
-    return con
+def resetGhosts(U, nCells) :
+    U[0,0] = U[0,1]
+    U[1,0] = -U[1,1]
+    U[2,0] = U[2,1]
+    U[0,nCells-1] = U[0,nCells-2]
+    U[1,nCells-1] = -U[1,nCells-2]
+    U[2,nCells-1] = U[2,nCells-2]
+    return U
 
 def getE(P, gamma, rho, v) :
     e = P / (gamma - 1.) / rho
@@ -80,9 +92,9 @@ def buildFcent(rho, v, P, E, nCells) :
     return Fcent
 
 def getCons(U) :
-    cons1 = U[0,:].sum()
-    cons2 = U[1,:].sum()
-    cons3 = U[2,:].sum()
+    cons1 = U[0,1:(nCells-1)].sum()
+    cons2 = U[1,1:(nCells-1)].sum()
+    cons3 = U[2,1:(nCells-1)].sum()
     return cons1, cons2, cons3
 
 def splitScalar(array) :
@@ -126,8 +138,8 @@ def Riemann(U, gamma, nCells, deltax) :
     alphaP = max3( lambdaP_L, lambdaP_R )
     alphaM = max3( -lambdaM_L, -lambdaM_R )
     Fface = np.zeros([3,nCells+1])
-    Fface[:,0] = np.array([0.0, P[0], 0.0])
-    Fface[:,nCells] = np.array([0.0, P[nCells-1], 0.0])
+    Fface[:,0] = np.array([0.0, 0.0, 0.0])
+    Fface[:,nCells] = np.array([0.0, 0.0, 0.0])
     Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
     FfaceL, FfaceR = splitVector(Fface)
     L = - ( FfaceR - FfaceL ) / deltax
@@ -168,8 +180,8 @@ for i in range(0,nSteps) :
     alphaMax = np.maximum( alphaP.max(), alphaM.max() )
 
     # no flux through walls
-    Fface[:,0] = np.array([0.0, P[0], 0.0])
-    Fface[:,nCells] = np.array([0.0, P[nCells-1], 0.0])
+    Fface[:,0] = np.array([0.0, 0.0, 0.0])
+    Fface[:,nCells] = np.array([0.0, 0.0, 0.0])
 
     # find fluxes at faces
     Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
@@ -187,12 +199,16 @@ for i in range(0,nSteps) :
         if i==0 :
             print('using rk3')
         U1 = U + minStep * L
+        U1 = resetGhosts(U1, nCells)
         L1 = Riemann(U1, gamma, nCells, deltax)
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
+        U2 = resetGhosts(U2, nCells)
         L2 = Riemann(U2, gamma, nCells, deltax)
         UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
+        UNew = resetGhosts(UNew, nCells)
     else :
         UNew = U + minStep * L
+        UNew = resetGhosts(UNew, nCells)
 
     # tease out new state variables
     rhoNew, vNew, PNew = getState(UNew, gamma)
@@ -232,20 +248,20 @@ def animate(i) :
 
     plt.subplot(2,2,1)
     plt.scatter(x,rhoAnim[i,:],s=1)
-    plt.axis([0.0,boxSize,rhoMin,rhoMax])
+    plt.axis([0.01,0.01+boxSize,rhoMin,rhoMax])
     plt.xlabel('x')
     plt.ylabel('Density')
     plt.title('t = ' + str(tAnim[i]))
 
     plt.subplot(2,2,2)
     plt.scatter(x,PAnim[i,:],s=1)
-    plt.axis([0.0,boxSize,PMin,PMax])
+    plt.axis([0.01,0.01+boxSize,PMin,PMax])
     plt.xlabel('x')
     plt.ylabel('Pressure')
 
     plt.subplot(2,2,3)
     plt.scatter(x,vAnim[i,:],s=1)
-    plt.axis([0.0,boxSize,vMin,vMax])
+    plt.axis([0.01,0.01+boxSize,vMin,vMax])
     plt.xlabel('x')
     plt.ylabel('Velocity')
 
