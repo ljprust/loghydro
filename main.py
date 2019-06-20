@@ -1,10 +1,11 @@
-import matplotlib
-matplotlib.rc("text", usetex=True)
+# import matplotlib
+# matplotlib.rc("text", usetex=True)
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 import matplotlib.animation as animation
 import numpy as np
 import argparse
+from sys import stdout
 
 parser = argparse.ArgumentParser(prog='PROG')
 parser.add_argument('--rk', action='store_true')
@@ -13,10 +14,12 @@ parser.add_argument('--mirror', action='store_true')
 args = parser.parse_args()
 
 # set parameters
-gamma      = 1.4
 nCells     = 10000
+nSteps     = 5000
+mirrorCell = 8000
+downsample = 1000
+gamma      = 1.4
 courantFac = 0.5
-nSteps     = 30000
 boxSize    = 5.0
 xDiscont   = 2.0
 P1         = 100.0
@@ -26,9 +29,7 @@ rho2       = 1.0
 v1         = 0.0
 v2         = 0.0
 period     = 200
-downsample = 1000
 theta      = 1.5 # 1 to 2, more diffusive for theta = 1
-mirrorCell = 8000
 
 # set initial conditions
 cellRight = int( nCells * xDiscont / boxSize )
@@ -44,10 +45,14 @@ def addEdges(array, begin, end) :
     return con
 
 # add ghost cells
-P = addEdges(P, P[0], P[nCells-1])
-rho = addEdges(rho, rho[0], rho[nCells-1])
-v = addEdges(v, -v[0], -v[nCells-1])
-nCells = nCells + 2
+P = addEdges(P, 1.0, 1.0)
+P = addEdges(P, 1.0, 1.0)
+rho = addEdges(rho, 1.0, 1.0)
+rho = addEdges(rho, 1.0, 1.0)
+v = addEdges(v, 0.0, 0.0)
+v = addEdges(v, 0.0, 0.0)
+nCells = nCells + 4
+mirrorCell = mirrorCell + 2
 
 # set positions and widths
 deltax = np.ones(nCells) * boxSize / float(nCells)
@@ -55,7 +60,6 @@ dx = deltax[0]
 x = range(0,nCells) * dx + 0.5 * dx
 
 # preallocate some arrays
-Fface = np.zeros([3,nCells+1])
 cons1 = np.zeros(nSteps)
 cons2 = np.zeros(nSteps)
 cons3 = np.zeros(nSteps)
@@ -70,28 +74,51 @@ def minmod(x, y, z) :
     * np.minimum( np.minimum( np.absolute(x), np.absolute(y) ), np.absolute(z)  )
     return result
 
-def reconstruct(c, cm1, cp1, cp2) :
-    cL = c + 0.5 * minmod( theta*(c-cm1), 0.5*(cp1-cm1), theta*(cp1-c) )
-    cR = cp1 - 0.5 * minmod( theta*(cp1-c), 0.5*(cp2-c), theta*(cp2-cp1) )
+def reconstruct(cm1, c0, cp1, cp2, theta) :
+    cL = c0 + 0.5 * minmod( theta*(c0-cm1), 0.5*(cp1-cm1), theta*(cp1-c0) )
+    cR = cp1 - 0.5 * minmod( theta*(cp1-c0), 0.5*(cp2-c0), theta*(cp2-cp1) )
     return cL, cR
 
-def resetGhosts(U, nCells) :
-    U[0,0] = U[0,1]
-    U[1,0] = -U[1,1]
-    U[2,0] = U[2,1]
-    U[0,nCells-1] = U[0,nCells-2]
-    U[1,nCells-1] = -U[1,nCells-2]
-    U[2,nCells-1] = U[2,nCells-2]
+def resetGhosts(U) :
+    length = U.shape[1]
+
+    U[0,1] =  U[0,2]
+    U[1,1] = -U[1,2]
+    U[2,1] =  U[2,2]
+
+    U[0,length-2] =  U[0,length-3]
+    U[1,length-2] = -U[1,length-3]
+    U[2,length-2] =  U[2,length-3]
+
+    U[0,0] =  U[0,3]
+    U[1,0] = -U[1,3]
+    U[2,0] =  U[2,3]
+
+    U[0,length-1] =  U[0,length-4]
+    U[1,length-1] = -U[1,length-4]
+    U[2,length-1] =  U[2,length-4]
+
     return U
 
 def resetMirror(U, mirrorCell) :
     if args.mirror :
-        U[0,mirrorCell-1] = U[0,mirrorCell-2]
+
+        U[0,mirrorCell-1] =  U[0,mirrorCell-2]
         U[1,mirrorCell-1] = -U[1,mirrorCell-2]
-        U[2,mirrorCell-1] = U[2,mirrorCell-2]
-        U[0,mirrorCell] = U[0,mirrorCell+1]
-        U[1,mirrorCell] = -U[1,mirrorCell+1]
-        U[2,mirrorCell] = U[2,mirrorCell+1]
+        U[2,mirrorCell-1] =  U[2,mirrorCell-2]
+
+        U[0,mirrorCell] =  U[0,mirrorCell-3]
+        U[1,mirrorCell] = -U[1,mirrorCell-3]
+        U[2,mirrorCell] =  U[2,mirrorCell-3]
+
+        U[0,mirrorCell+1] =  U[0,mirrorCell+4]
+        U[1,mirrorCell+1] = -U[1,mirrorCell+4]
+        U[2,mirrorCell+1] =  U[2,mirrorCell+4]
+
+        U[0,mirrorCell+2] =  U[0,mirrorCell+3]
+        U[1,mirrorCell+2] = -U[1,mirrorCell+3]
+        U[2,mirrorCell+2] =  U[2,mirrorCell+3]
+
     return U
 
 def getE(P, gamma, rho, v) :
@@ -99,18 +126,22 @@ def getE(P, gamma, rho, v) :
     E = rho * ( e + 0.5 * v * v )
     return E
 
-def buildU(rho, v, E, nCells) :
-    U = np.zeros([3,nCells])
-    U[0,0:nCells] = rho
-    U[1,0:nCells] = rho * v
-    U[2,0:nCells] = E
+def buildU(rho, v, P) :
+    length = len(rho)
+    U = np.zeros([3,length])
+    E = getE(P, gamma, rho, v)
+    U[0,0:length] = rho
+    U[1,0:length] = rho * v
+    U[2,0:length] = E
     return U
 
-def buildFcent(rho, v, P, E, nCells) :
-    Fcent = np.zeros([3,nCells])
-    Fcent[0,0:nCells] = rho * v
-    Fcent[1,0:nCells] = rho * v * v + P
-    Fcent[2,0:nCells] = ( E + P ) * v
+def buildFcent(rho, v, P) :
+    length = len(rho)
+    Fcent = np.zeros([3,length])
+    E = getE(P, gamma, rho, v)
+    Fcent[0,0:length] = rho * v
+    Fcent[1,0:length] = rho * v * v + P
+    Fcent[2,0:length] = ( E + P ) * v
     return Fcent
 
 def getCons(U) :
@@ -146,49 +177,67 @@ def getState(U, gamma) :
     P = ( gamma - 1.0 ) * rho * e
     return rho, v, P
 
-def Riemann(U, gamma, nCells, deltax) :
+def splitRecon(var) :
+    length = len(var)
+    varm1 = var[0:length-3]
+    var0 = var[1:length-2]
+    varp1 = var[2:length-1]
+    varp2 = var[3:length]
+    return varm1, var0, varp1, varp2
+
+def RiemannRecon(U, gamma, deltax) :
+    nCells = len(deltax)
+
+    # extract state variables
     rho, v, P = getState(U, gamma)
-    E = getE(P, gamma, rho, v)
-    Fcent = buildFcent(rho, v, P, E, nCells)
-    UL, UR = splitVector(U)
-    FcentL, FcentR = splitVector(Fcent)
-    c = getc(gamma, P, rho)
-    lambdaP = v + c
-    lambdaM = v - c
-    lambdaP_L, lambdaP_R = splitScalar(lambdaP)
-    lambdaM_L, lambdaM_R = splitScalar(lambdaM)
+
+    # split state variables for reconstruction
+    rhom1, rho0, rhop1, rhop2 = splitRecon(rho)
+    vm1, v0, vp1, vp2 = splitRecon(v)
+    Pm1, P0, Pp1, Pp2 = splitRecon(P)
+
+    # do the reconstruction
+    rhoL, rhoR = reconstruct(rhom1, rho0, rhop1, rhop2, theta)
+    vL, vR = reconstruct(vm1, v0, vp1, vp2, theta)
+    PL, PR = reconstruct(Pm1, P0, Pp1, Pp2, theta)
+
+    # remake U and Fcent with reconstructed variables
+    UL = buildU(rhoL, vL, PL)
+    UR = buildU(rhoR, vR, PR)
+    FcentL = buildFcent(rhoL, vL, PL)
+    FcentR = buildFcent(rhoR, vR, PR)
+
+    # get sound speed
+    cL = getc(gamma, PL, rhoL)
+    cR = getc(gamma, PR, rhoR)
+
+    # find eigenvalues
+    lambdaP_L = vL + cL
+    lambdaP_R = vR + cR
+    lambdaM_L = vL - cL
+    lambdaM_R = vR - cR
     alphaP = max3( lambdaP_L, lambdaP_R )
     alphaM = max3( -lambdaM_L, -lambdaM_R )
+    alphaMax = np.maximum( alphaP.max(), alphaM.max() )
+
+    # find face fluxes
     Fface = np.zeros([3,nCells+1])
-    Fface[:,0] = np.array([0.0, 0.0, 0.0])
-    Fface[:,nCells] = np.array([0.0, 0.0, 0.0])
-    Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
+    Fface[:,2:nCells-1] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
     FfaceL, FfaceR = splitVector(Fface)
+
+    # find time derivatives
     L = - ( FfaceR - FfaceL ) / deltax
-    return L
 
-t = 0.0
-E = getE(P, gamma, rho, v)
-U = buildU(rho, v, E, nCells)
-U = resetMirror(U, mirrorCell)
-rho, v, P = getState(U, gamma)
+    return L, alphaMax
 
-# save variables for animation
-rhoAnim[0,:] = rho
-vAnim[0,:] = v
-PAnim[0,:] = P
-tAnim[0] = t
+def Riemann(U, gamma, deltax) :
+    nCells = len(deltax)
 
-for i in range(0,nSteps) :
+    # extract state variables
+    rho, v, P = getState(U, gamma)
 
-    # get energy from EOS
-    E = getE(P, gamma, rho, v)
-
-    # cell-centered values
-    Fcent = buildFcent(rho, v, P, E, nCells)
-
-    # conserved variables
-    # cons1[i], cons2[i], cons3[i] = getCons(U)
+    # get cell-centered fluxes
+    Fcent = buildFcent(rho, v, P)
 
     # split into left and right values
     UL, UR = splitVector(U)
@@ -206,16 +255,42 @@ for i in range(0,nSteps) :
     alphaM = max3( -lambdaM_L, -lambdaM_R )
     alphaMax = np.maximum( alphaP.max(), alphaM.max() )
 
-    # set fluxes at outer edges of ghost cells to something arbitrary
-    Fface[:,0] = np.array([0.0, 0.0, 0.0])
-    Fface[:,nCells] = np.array([0.0, 0.0, 0.0])
-
     # find fluxes at faces
+    Fface = np.zeros([3,nCells+1])
     Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
     FfaceL, FfaceR = splitVector(Fface)
 
     # find time derivatives
     L = - ( FfaceR - FfaceL ) / deltax
+
+    return L, alphaMax
+
+# initialize t, U
+t = 0.0
+U = buildU(rho, v, P)
+U = resetGhosts(U)
+U = resetMirror(U, mirrorCell)
+rho, v, P = getState(U, gamma)
+
+# save variables for animation
+rhoAnim[0,:] = rho
+vAnim[0,:] = v
+PAnim[0,:] = P
+tAnim[0] = t
+
+for i in range(0,nSteps) :
+
+    stdout.write( '\r t = ' + str(t)[0:5] )
+    stdout.flush()
+
+    # conserved variables
+    # cons1[i], cons2[i], cons3[i] = getCons(U)
+
+    # do Riemann solve
+    if args.recon :
+        L, alphaMax = RiemannRecon(U, gamma, deltax)
+    else :
+        L, alphaMax = Riemann(U, gamma, deltax)
 
     # find timestep
     deltat = courantFac * deltax / alphaMax
@@ -224,20 +299,20 @@ for i in range(0,nSteps) :
     # propagate charges
     if args.rk :
         U1 = U + minStep * L
-        U1 = resetGhosts(U1, nCells)
+        U1 = resetGhosts(U1)
         U1 = resetMirror(U1, mirrorCell)
-        L1 = Riemann(U1, gamma, nCells, deltax)
+        L1, alphaMax1 = Riemann(U1, gamma, deltax)
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
-        U2 = resetGhosts(U2, nCells)
+        U2 = resetGhosts(U2)
         U2 = resetMirror(U2, mirrorCell)
-        L2 = Riemann(U2, gamma, nCells, deltax)
+        L2, alphaMax2 = Riemann(U2, gamma, deltax)
         UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
     else :
         UNew = U + minStep * L
 
     # tease out new state variables
     U = UNew
-    U = resetGhosts(U, nCells)
+    U = resetGhosts(U)
     U = resetMirror(U, mirrorCell)
     rho, v, P = getState(U, gamma)
     t = t + minStep
@@ -247,22 +322,17 @@ for i in range(0,nSteps) :
     vAnim[i+1,:] = v
     PAnim[i+1,:] = P
     tAnim[i+1] = t
-'''
-cons1diff = cons1.max() - cons1.min()
-cons2diff = cons2.max() - cons2.min()
-cons3diff = cons3.max() - cons3.min()
-print('cons1diff:',cons1diff)
-print('cons2diff:',cons2diff)
-print('cons3diff:',cons3diff)
-'''
-print('Done crunching numbers')
 
+stdout.write('\nDone crunching numbers\n')
+
+# downsample timesteps for plotting
 rhoAnim = rhoAnim[::downsample,:]
 vAnim = vAnim[::downsample,:]
 PAnim = PAnim[::downsample,:]
 tAnim = tAnim[::downsample]
 nFrames = len(tAnim)
 
+# find some plot limits
 rhoMax = rhoAnim.max()
 vMin = vAnim.min()
 vMax = vAnim.max()
