@@ -301,12 +301,23 @@ for i in range(0,nSteps) :
         U1 = U + minStep * L
         U1 = resetGhosts(U1)
         U1 = resetMirror(U1, mirrorCell)
-        L1, alphaMax1 = Riemann(U1, gamma, deltax)
+
+        if args.recon :
+            L1, alphaMax1 = RiemannRecon(U1, gamma, deltax)
+        else :
+            L1, alphaMax1 = Riemann(U1, gamma, deltax)
+
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
         U2 = resetGhosts(U2)
         U2 = resetMirror(U2, mirrorCell)
-        L2, alphaMax2 = Riemann(U2, gamma, deltax)
+        
+        if args.recon :
+            L2, alphaMax2 = RiemannRecon(U2, gamma, deltax)
+        else :
+            L2, alphaMax2 = Riemann(U2, gamma, deltax)
+
         UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
+
     else :
         UNew = U + minStep * L
 

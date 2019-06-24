@@ -182,11 +182,17 @@ def splitReconY(var) :
     return varm1, var0, varp1, varp2
 
 def flipVelX(U) :
-    U[1,:] = -U[1,:]
+    try:
+        U[1,:,:] = -U[1,:,:]
+    except:
+        U[1,:] = -U[1,:]
     return U
 
 def flipVelY(U) :
-    U[2,:] = -U[2,:]
+    try:
+        U[2,:,:] = -U[2,:,:]
+    except:
+        U[2,:] = -U[2,:]
     return U
 
 def getEdgeStates(U) :
@@ -219,6 +225,39 @@ def getEdgeStates(U) :
     UT2 = np.zeros((4, nx, 2))
     UT2[:, :, 0] = UT
     UT2[:, :, 1] = UTflip
+
+    return UL2, UR2, UB2, UT2
+
+def getEdgeStatesRecon(U) :
+    shape = U.shape
+    nx = shape[1]
+    ny = shape[2]
+
+    UL = U[:, 0:3, :]
+    UR = U[:, (nx-3):nx, :]
+    UB = U[:, :, 0:3]
+    UT = U[:, :, (ny-3):ny]
+
+    ULflip = flipVelX(UL)
+    URflip = flipVelX(UR)
+    UBflip = flipVelY(UB)
+    UTflip = flipVelY(UT)
+
+    UL2 = np.zeros((4, 6, ny))
+    UL2[:, 0:3, :] = ULflip
+    UL2[:, 3:6, :] = UL
+
+    UR2 = np.zeros((4, 6, ny))
+    UR2[:, 0:3, :] = UR
+    UR2[:, 3:6, :] = URflip
+
+    UB2 = np.zeros((4, nx, 6))
+    UB2[:, :, 0:3] = UBflip
+    UB2[:, :, 3:6] = UB
+
+    UT2 = np.zeros((4, nx, 6))
+    UT2[:, :, 0:3] = UT
+    UT2[:, :, 3:6] = UTflip
 
     return UL2, UR2, UB2, UT2
 
@@ -266,6 +305,74 @@ def getFlux(U, gamma) :
 
     return Fface, Gface, alphaMax
 
+def getFluxRecon(U, gamma) :
+    shape = U.shape
+    nCellsX = shape[1]
+    nCellsY = shape[2]
+
+    # extract state variables
+    rho, vx, vy, P = getState(U, gamma)
+
+    # split state variables for reconstruction
+    rhom1x, rho0x, rhop1x, rhop2x = splitReconX(rho)
+    vm1x, v0x, vp1x, vp2x = splitReconX(v)
+    Pm1x, P0x, Pp1x, Pp2x = splitReconX(P)
+
+    rhom1y, rho0y, rhop1y, rhop2y = splitReconY(rho)
+    vm1y, v0y, vp1y, vp2y = splitReconY(v)
+    Pm1y, P0y, Pp1y, Pp2y = splitReconY(P)
+
+    # do the reconstruction
+    rhoL, rhoR = reconstruct(rhom1x, rho0x, rhop1x, rhop2x, theta)
+    vL, vR = reconstruct(vm1x, v0x, vp1x, vp2x, theta)
+    PL, PR = reconstruct(Pm1x, P0x, Pp1x, Pp2x, theta)
+
+    rhoB, rhoT = reconstruct(rhom1y, rho0y, rhop1y, rhop2y, theta)
+    vB, vT = reconstruct(vm1y, v0y, vp1y, vp2y, theta)
+    PB, PT = reconstruct(Pm1y, P0y, Pp1y, Pp2y, theta)
+
+    # remake U and Fcent with reconstructed variables
+    UL = buildU(rhoL, vL, PL)
+    UR = buildU(rhoR, vR, PR)
+    UB = buildU(rhoB, vB, PB)
+    UT = buildU(rhoT, vT, PT)
+    FcentL = buildFcent(rhoL, vL, PL)
+    FcentR = buildFcent(rhoR, vR, PR)
+    GcentB = buildFcent(rhoB, vB, PB)
+    GcentT = buildFcent(rhoT, vT, PT)
+
+    # get sound speed
+    cL = getc(gamma, PL, rhoL)
+    cR = getc(gamma, PR, rhoR)
+    cB = getc(gamma, PB, rhoB)
+    cT = getc(gamma, PT, rhoT)
+
+    # find eigenvalues
+    lambdaPL = vL + cL
+    lambdaPR = vR + cR
+    lambdaML = vL - cL
+    lambdaMR = vR - cR
+    alphaPx = max3( lambdaPL, lambdaPR )
+    alphaMx = max3( -lambdaML, -lambdaMR )
+    alphaMaxX = np.maximum( alphaPx.max(), alphaMx.max() )
+
+    lambdaPB = vB + cB
+    lambdaPT = vT + cT
+    lambdaMB = vB - cB
+    lambdaMT = vT - cT
+    alphaPy = max3( lambdaPB, lambdaPT )
+    alphaMy = max3( -lambdaMB, -lambdaMT )
+    alphaMaxY = np.maximum( alphaPy.max(), alphaMy.max() )
+
+    alphaMax = np.maximum(alphaMaxX, alphaMaxY)
+
+    # find face fluxes
+    Fface = np.zeros([4,nCellsX+1])
+    Fface[:, 2:(nCellsX-1), :] = ( alphaPx * FcentL + alphaMx * FcentR - alphaPx * alphaMx * (UR - UL) ) / ( alphaPx + alphaMx )
+    Gface[:, :, 2:(nCellsY-1)] = ( alphaPy * GcentB + alphaMy * GcentT - alphaPy * alphaMy * (UT - UB) ) / ( alphaPy + alphaMy )
+
+    return Fface, Gface, alphaMax
+
 def getL(U, gamma, dx, dy) :
     shape = U.shape
     nCellsX = shape[1]
@@ -304,6 +411,44 @@ def getL(U, gamma, dx, dy) :
 
     return L, alphaMax
 
+def getLRecon(U, gamma, dx, dy) :
+    shape = U.shape
+    nCellsX = shape[1]
+    nCellsY = shape[2]
+
+    # get flux on interior faces
+    FfaceI, GfaceI, alphaMaxI = getFluxRecon(U, gamma)
+
+    # get flux on edges
+    UL, UR, UB, UT = getEdgeStatesRecon(U)
+    FfaceL, GfaceL, alphaMaxL = getFluxRecon(UL, gamma)
+    FfaceR, GfaceR, alphaMaxR = getFluxRecon(UR, gamma)
+    FfaceB, GfaceB, alphaMaxB = getFluxRecon(UB, gamma)
+    FfaceT, GfaceT, alphaMaxT = getFluxRecon(UT, gamma)
+
+    # find the overall largest alpha
+    alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
+
+    # construct the full flux arrays
+    FfaceFull = np.zeros((4, nCellsX+1, nCellsY))
+    GfaceFull = np.zeros((4, nCellsX, nCellsY+1))
+
+    FfaceFull[:, 2:(nCellsX-1), :]           = FfaceI
+    GfaceFull[:, :, 2:(nCellsY-1)]           = GfaceI
+    FfaceFull[:, 0:2, :]                     = FfaceL[:, 3:5, :]
+    FfaceFull[:, (nCellsX-1):(nCellsX+1), :] = FfaceR[:, 2:4, :]
+    GfaceFull[:, :, 0:2]                     = GfaceB[:, :, 3:5]
+    GfaceFull[:, :, (nCellsY-1):(nCellsY+1)] = GfaceT[:, :, 2:4]
+
+    # split flux arrays
+    FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
+    GfaceFullB, GfaceFullT = splitVectorY(GfaceFull)
+
+    # find time derivatives
+    L = - ( FfaceFullR - FfaceFullL ) / dx - ( GfaceFullT - GfaceFullB ) / dy
+
+    return L, alphaMax
+
 # initialize t, U
 t = 0.0
 U = buildU(rho, vx, vy, P, gamma)
@@ -325,10 +470,10 @@ for i in range(0,nSteps) :
     # cons1[i], cons2[i], cons3[i] = getCons(U)
 
     # do Riemann solve
-    # if args.recon :
-    #     L, alphaMax = RiemannRecon(U, gamma, deltax)
-    # else :
-    L, alphaMax = getL(U, gamma, dx, dy)
+    if args.recon :
+        L, alphaMax = getLRecon(U, gamma, dx, dy)
+    else :
+        L, alphaMax = getL(U, gamma, dx, dy)
 
     # find timestep
     deltatx = courantFac * dx / alphaMax
@@ -338,18 +483,25 @@ for i in range(0,nSteps) :
     minStep = np.minimum(minStepX, minStepY)
 
     # propagate charges
-    # if args.rk :
-    #     U1 = U + minStep * L
-    #     U1 = resetGhosts(U1)
-    #     U1 = resetMirror(U1, mirrorCell)
-    #     L1, alphaMax1 = Riemann(U1, gamma, deltax)
-    #     U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
-    #     U2 = resetGhosts(U2)
-    #     U2 = resetMirror(U2, mirrorCell)
-    #     L2, alphaMax2 = Riemann(U2, gamma, deltax)
-    #     UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
-    # else :
-    UNew = U + minStep * L
+    if args.rk :
+        U1 = U + minStep * L
+
+        if args.recon :
+            L1, alphaMax1 = getLRecon(U1, gamma, dx, dy)
+        else :
+            L1, alphaMax1 = getL(U1, gamma, dx, dy)
+
+        U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
+
+        if args.recon :
+            L2, alphaMax2 = getLRecon(U2, gamma, dx, dy)
+        else :
+            L2, alphaMax2 = getL(U2, gamma, dx, dy)
+
+        UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
+
+    else :
+        UNew = U + minStep * L
 
     # tease out new state variables
     U = UNew
