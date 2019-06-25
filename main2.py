@@ -6,6 +6,7 @@ import matplotlib.animation as animation
 import numpy as np
 import argparse
 from sys import stdout
+from lib import *
 
 parser = argparse.ArgumentParser(prog='PROG')
 parser.add_argument('--rk', action='store_true')
@@ -34,7 +35,7 @@ v1          = 0.0
 v2          = 0.0
 period      = 200
 theta       = 1.0 # 1 to 2, more diffusive for theta = 1
-threshold   = 1.0e-10
+threshold   = 1.0e-15
 
 # set initial conditions
 cellRight = int( nCellsX * xDiscont / boxSizeX )
@@ -62,175 +63,6 @@ vxAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 vyAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 PAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 tAnim = np.zeros(nSteps+1)
-
-def cutError(U, threshold=1.0e-15) :
-    boolArray = np.absolute(U) < threshold
-    U[boolArray] = 0.0
-    return U
-
-def minmod(x, y, z) :
-    result = 0.25 * np.absolute( np.sign(x) + np.sign(y) ) \
-    * ( np.sign(x) + np.sign(y) ) \
-    * np.minimum( np.minimum( np.absolute(x), np.absolute(y) ), np.absolute(z)  )
-    return result
-
-def reconstruct(cm1, c0, cp1, cp2, theta) :
-    cL = c0 + 0.5 * minmod( theta*(c0-cm1), 0.5*(cp1-cm1), theta*(cp1-c0) )
-    cR = cp1 - 0.5 * minmod( theta*(cp1-c0), 0.5*(cp2-c0), theta*(cp2-cp1) )
-    return cL, cR
-
-def getE(P, gamma, rho, vx, vy) :
-    e = P / (gamma - 1.) / rho
-    E = rho * ( e + 0.5 * ( vx*vx + vy*vy ) )
-    return E
-
-def getState(U, gamma) :
-    rho = U[0,:,:]
-    vx = U[1,:,:] / rho
-    vy = U[2,:,:] / rho
-    e = U[3,:,:] / rho - 0.5 * ( vx*vx + vy*vy )
-    P = ( gamma - 1.0 ) * rho * e
-    return rho, vx, vy, P
-
-def getStateArray(U, gamma) :
-    rho = U[0,:]
-    vx = U[1,:] / rho
-    vy = U[2,:] / rho
-    e = U[3,:] / rho - 0.5 * ( vx*vx + vy*vy )
-    P = ( gamma - 1.0 ) * rho * e
-    return rho, vx, vy, P
-
-def buildU(rho, vx, vy, P, gamma) :
-    shape = rho.shape
-    nx = shape[0]
-    ny = shape[1]
-    U = np.zeros([4,nx,ny])
-    E = getE(P, gamma, rho, vx, vy)
-    U[0,:,:] = rho
-    U[1,:,:] = rho * vx
-    U[2,:,:] = rho * vy
-    U[3,:,:] = E
-    return U
-
-def buildUArray(rho, vx, vy, P, gamma) :
-    shape = rho.shape
-    nx = shape[0]
-    U = np.zeros([4,nx])
-    E = getE(P, gamma, rho, vx, vy)
-    U[0,:] = rho
-    U[1,:] = rho * vx
-    U[2,:] = rho * vy
-    U[3,:] = E
-    return U
-
-def buildFcent(rho, vx, vy, P) :
-    shape = rho.shape
-    nx = shape[0]
-    ny = shape[1]
-    Fcent = np.zeros([4,nx,ny])
-    E = getE(P, gamma, rho, vx, vy)
-    Fcent[0,:,:] = rho * vx
-    Fcent[1,:,:] = rho * vx * vx + P
-    Fcent[2,:,:] = rho * vx * vy
-    Fcent[3,:,:] = ( E + P ) * vx
-    return Fcent
-
-def buildGcent(rho, vx, vy, P) :
-    shape = rho.shape
-    nx = shape[0]
-    ny = shape[1]
-    Gcent = np.zeros([4,nx,ny])
-    E = getE(P, gamma, rho, vx, vy)
-    Gcent[0,:,:] = rho * vy
-    Gcent[1,:,:] = rho * vx * vy
-    Gcent[2,:,:] = rho * vy * vy + P
-    Gcent[3,:,:] = ( E + P ) * vy
-    return Gcent
-
-def getCons(U) :
-    cons1 = U[0,:,:].sum()
-    cons2 = U[1,:,:].sum()
-    cons3 = U[2,:,:].sum()
-    cons4 = U[3,:,:].sum()
-    return cons1, cons2, cons3, cons4
-
-def splitScalarX(array) :
-    shape = array.shape
-    nx = shape[0]
-    arrayL = array[0:nx-1, :]
-    arrayR = array[1:nx, :]
-    return arrayL, arrayR
-
-def splitScalarY(array) :
-    shape = array.shape
-    ny = shape[1]
-    arrayB = array[:, 0:ny-1]
-    arrayT = array[:, 1:ny]
-    return arrayB, arrayT
-
-def splitVectorX(array) :
-    shape = array.shape
-    nx = shape[1]
-    arrayL = array[:, 0:nx-1, :]
-    arrayR = array[:, 1:nx, :]
-    return arrayL, arrayR
-
-def splitVectorY(array) :
-    shape = array.shape
-    ny = shape[2]
-    arrayB = array[:, :, 0:ny-1]
-    arrayT = array[:, :, 1:ny]
-    return arrayB, arrayT
-
-def getc(gamma, P, rho) :
-    c = np.sqrt( gamma * P / rho )
-    return c
-
-def max3(array1, array2) :
-    arrayMax = np.maximum( 0., np.maximum( array1, array2 ) )
-    return arrayMax
-
-def splitReconX(var) :
-    shape = var.shape
-    nx = shape[0]
-    varm1 = var[0:nx-3, :]
-    var0 = var[1:nx-2, :]
-    varp1 = var[2:nx-1, :]
-    varp2 = var[3:nx, :]
-    return varm1, var0, varp1, varp2
-
-def splitReconY(var) :
-    shape = var.shape
-    ny = shape[1]
-    varm1 = var[:, 0:ny-3]
-    var0 = var[:, 1:ny-2]
-    varp1 = var[:, 2:ny-1]
-    varp2 = var[:, 3:ny]
-    return varm1, var0, varp1, varp2
-
-def flipVelScalarX(U, gamma) :
-    rho, vx, vy, P = getStateArray(U, gamma)
-    vx = -vx
-    Uflip = buildUArray(rho, vx, vy, P, gamma)
-    return Uflip
-
-def flipVelScalarY(U, gamma) :
-    rho, vx, vy, P = getStateArray(U, gamma)
-    vy = -vy
-    ULflip = buildUArray(rho, vx, vy, P, gamma)
-    return ULflip
-
-def flipVelVectorX(U, gamma) :
-    rho, vx, vy, P = getState(U, gamma)
-    vx = -vx
-    Uflip = buildU(rho, vx, vy, P, gamma)
-    return Uflip
-
-def flipVelVectorY(U, gamma) :
-    rho, vx, vy, P = getState(U, gamma)
-    vy = -vy
-    Uflip = buildU(rho, vx, vy, P, gamma)
-    return Uflip
 
 def getEdgeStates(U, gamma) :
     shape = U.shape
@@ -304,11 +136,11 @@ def getFlux(U, gamma) :
     nCellsY = shape[2]
 
     # extract state variables
-    rho, vx, vy, P = getState(U, gamma)
+    rho, vx, vy, P = getState4(U, gamma)
 
     # get cell-centered fluxes
-    Fcent = buildFcent(rho, vx, vy, P)
-    Gcent = buildGcent(rho, vx, vy, P)
+    Fcent = buildFcent4(rho, vx, vy, P, gamma)
+    Gcent = buildGcent4(rho, vx, vy, P, gamma)
 
     # split into left and right values
     UL, UR = splitVectorX(U)
@@ -348,35 +180,39 @@ def getFluxRecon(U, gamma) :
     nCellsY = shape[2]
 
     # extract state variables
-    rho, vx, vy, P = getState(U, gamma)
+    rho, vx, vy, P = getState4(U, gamma)
 
     # split state variables for reconstruction
     rhom1x, rho0x, rhop1x, rhop2x = splitReconX(rho)
-    vm1x, v0x, vp1x, vp2x = splitReconX(v)
+    vxm1x, vx0x, vxp1x, vxp2x = splitReconX(vx)
+    vym1x, vy0x, vyp1x, vyp2x = splitReconX(vy)
     Pm1x, P0x, Pp1x, Pp2x = splitReconX(P)
 
     rhom1y, rho0y, rhop1y, rhop2y = splitReconY(rho)
-    vm1y, v0y, vp1y, vp2y = splitReconY(v)
+    vxm1y, vx0y, vxp1y, vxp2y = splitReconY(vx)
+    vym1y, vy0y, vyp1y, vyp2y = splitReconY(vy)
     Pm1y, P0y, Pp1y, Pp2y = splitReconY(P)
 
     # do the reconstruction
     rhoL, rhoR = reconstruct(rhom1x, rho0x, rhop1x, rhop2x, theta)
-    vL, vR = reconstruct(vm1x, v0x, vp1x, vp2x, theta)
+    vxL, vxR = reconstruct(vxm1x, vx0x, vxp1x, vxp2x, theta)
+    vyL, vyR = reconstruct(vym1x, vy0x, vyp1x, vyp2x, theta)
     PL, PR = reconstruct(Pm1x, P0x, Pp1x, Pp2x, theta)
 
     rhoB, rhoT = reconstruct(rhom1y, rho0y, rhop1y, rhop2y, theta)
-    vB, vT = reconstruct(vm1y, v0y, vp1y, vp2y, theta)
+    vxB, vxT = reconstruct(vxm1y, vx0y, vxp1y, vxp2y, theta)
+    vyB, vyT = reconstruct(vym1y, vy0y, vyp1y, vyp2y, theta)
     PB, PT = reconstruct(Pm1y, P0y, Pp1y, Pp2y, theta)
 
     # remake U and Fcent with reconstructed variables
-    UL = buildU(rhoL, vL, PL)
-    UR = buildU(rhoR, vR, PR)
-    UB = buildU(rhoB, vB, PB)
-    UT = buildU(rhoT, vT, PT)
-    FcentL = buildFcent(rhoL, vL, PL)
-    FcentR = buildFcent(rhoR, vR, PR)
-    GcentB = buildFcent(rhoB, vB, PB)
-    GcentT = buildFcent(rhoT, vT, PT)
+    UL = buildU4(rhoL, vxL, vyL, PL, gamma)
+    UR = buildU4(rhoR, vxR, vyR, PR, gamma)
+    UB = buildU4(rhoB, vxB, vyB, PB, gamma)
+    UT = buildU4(rhoT, vxT, vyT, PT, gamma)
+    FcentL = buildFcent4(rhoL, vL, PL, gamma)
+    FcentR = buildFcent4(rhoR, vR, PR, gamma)
+    GcentB = buildGcent4(rhoB, vB, PB, gamma)
+    GcentT = buildGcent4(rhoT, vT, PT, gamma)
 
     # get sound speed
     cL = getc(gamma, PL, rhoL)
@@ -491,8 +327,8 @@ def getLRecon(U, gamma, dx, dy) :
 
 # initialize t, U
 t = 0.0
-U = buildU(rho, vx, vy, P, gamma)
-rho, vx, vy, P = getState(U, gamma)
+U = buildU4(rho, vx, vy, P, gamma)
+rho, vx, vy, P = getState4(U, gamma)
 
 # save variables for animation
 rhoAnim[0,:,:] = rho
@@ -507,7 +343,7 @@ for i in range(0,nSteps) :
     stdout.flush()
 
     # conserved variables
-    cons1[i], cons2[i], cons3[i], cons4[i] = getCons(U)
+    cons1[i], cons2[i], cons3[i], cons4[i] = getCons4(U)
 
     # do Riemann solve
     if args.recon :
@@ -546,7 +382,7 @@ for i in range(0,nSteps) :
     # tease out new state variables
     U = UNew
     U = cutError(U, threshold)
-    rho, vx, vy, P = getState(U, gamma)
+    rho, vx, vy, P = getState4(U, gamma)
     t = t + minStep
 
     # print('cons1',cons1[i],'cons2',cons2[i],'cons3',cons3[i],'cons4',cons4[i])
