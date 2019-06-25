@@ -15,13 +15,13 @@ parser.add_argument('--mirror', action='store_true')
 args = parser.parse_args()
 
 # set parameters
-viewY       = 0
-nCellsX     = 500
-nCellsY     = 100
-nSteps      = 1000
+viewY       = 25
+nCellsX     = 400
+nCellsY     = 50
+nSteps      = 1500
 mirrorCellX = 50
 mirrorCellY = 50
-downsample  = 20
+downsample  = 50
 gamma       = 1.4
 courantFac  = 0.5
 boxSizeX    = 5.0
@@ -97,7 +97,7 @@ def getEdgeStates(U, gamma) :
 
     return UL2, UR2, UB2, UT2
 
-def getEdgeStatesRecon(U) :
+def getEdgeStatesRecon(U, gamma) :
     shape = U.shape
     nx = shape[1]
     ny = shape[2]
@@ -107,10 +107,10 @@ def getEdgeStatesRecon(U) :
     UB = U[:, :, 0:3]
     UT = U[:, :, (ny-3):ny]
 
-    ULflip = flipVelVectorX(UL)
-    URflip = flipVelVectorX(UR)
-    UBflip = flipVelVectorY(UB)
-    UTflip = flipVelVectorY(UT)
+    ULflip = flipVelVectorX(UL, gamma)
+    URflip = flipVelVectorX(UR, gamma)
+    UBflip = flipVelVectorY(UB, gamma)
+    UTflip = flipVelVectorY(UT, gamma)
 
     UL2 = np.zeros((4, 6, ny))
     UL2[:, 0:3, :] = ULflip
@@ -209,10 +209,10 @@ def getFluxRecon(U, gamma) :
     UR = buildU4(rhoR, vxR, vyR, PR, gamma)
     UB = buildU4(rhoB, vxB, vyB, PB, gamma)
     UT = buildU4(rhoT, vxT, vyT, PT, gamma)
-    FcentL = buildFcent4(rhoL, vL, PL, gamma)
-    FcentR = buildFcent4(rhoR, vR, PR, gamma)
-    GcentB = buildGcent4(rhoB, vB, PB, gamma)
-    GcentT = buildGcent4(rhoT, vT, PT, gamma)
+    FcentL = buildFcent4(rhoL, vxL, vyL, PL, gamma)
+    FcentR = buildFcent4(rhoR, vxR, vyR, PR, gamma)
+    GcentB = buildGcent4(rhoB, vxB, vyB, PB, gamma)
+    GcentT = buildGcent4(rhoT, vxT, vyT, PT, gamma)
 
     # get sound speed
     cL = getc(gamma, PL, rhoL)
@@ -221,18 +221,18 @@ def getFluxRecon(U, gamma) :
     cT = getc(gamma, PT, rhoT)
 
     # find eigenvalues
-    lambdaPL = vL + cL
-    lambdaPR = vR + cR
-    lambdaML = vL - cL
-    lambdaMR = vR - cR
+    lambdaPL = vxL + cL
+    lambdaPR = vxR + cR
+    lambdaML = vxL - cL
+    lambdaMR = vxR - cR
     alphaPx = max3( lambdaPL, lambdaPR )
     alphaMx = max3( -lambdaML, -lambdaMR )
     alphaMaxX = np.maximum( alphaPx.max(), alphaMx.max() )
 
-    lambdaPB = vB + cB
-    lambdaPT = vT + cT
-    lambdaMB = vB - cB
-    lambdaMT = vT - cT
+    lambdaPB = vyB + cB
+    lambdaPT = vyT + cT
+    lambdaMB = vyB - cB
+    lambdaMT = vyT - cT
     alphaPy = max3( lambdaPB, lambdaPT )
     alphaMy = max3( -lambdaMB, -lambdaMT )
     alphaMaxY = np.maximum( alphaPy.max(), alphaMy.max() )
@@ -240,9 +240,8 @@ def getFluxRecon(U, gamma) :
     alphaMax = np.maximum(alphaMaxX, alphaMaxY)
 
     # find face fluxes
-    Fface = np.zeros([4,nCellsX+1])
-    Fface[:, 2:(nCellsX-1), :] = ( alphaPx * FcentL + alphaMx * FcentR - alphaPx * alphaMx * (UR - UL) ) / ( alphaPx + alphaMx )
-    Gface[:, :, 2:(nCellsY-1)] = ( alphaPy * GcentB + alphaMy * GcentT - alphaPy * alphaMy * (UT - UB) ) / ( alphaPy + alphaMy )
+    Fface = ( alphaPx * FcentL + alphaMx * FcentR - alphaPx * alphaMx * (UR - UL) ) / ( alphaPx + alphaMx )
+    Gface = ( alphaPy * GcentB + alphaMy * GcentT - alphaPy * alphaMy * (UT - UB) ) / ( alphaPy + alphaMy )
 
     return Fface, Gface, alphaMax
 
@@ -296,7 +295,7 @@ def getLRecon(U, gamma, dx, dy) :
     FfaceI, GfaceI, alphaMaxI = getFluxRecon(U, gamma)
 
     # get flux on edges
-    UL, UR, UB, UT = getEdgeStatesRecon(U)
+    UL, UR, UB, UT = getEdgeStatesRecon(U, gamma)
     FfaceL, GfaceL, alphaMaxL = getFluxRecon(UL, gamma)
     FfaceR, GfaceR, alphaMaxR = getFluxRecon(UR, gamma)
     FfaceB, GfaceB, alphaMaxB = getFluxRecon(UB, gamma)
@@ -311,10 +310,10 @@ def getLRecon(U, gamma, dx, dy) :
 
     FfaceFull[:, 2:(nCellsX-1), :]           = FfaceI
     GfaceFull[:, :, 2:(nCellsY-1)]           = GfaceI
-    FfaceFull[:, 0:2, :]                     = FfaceL[:, 3:5, :]
-    FfaceFull[:, (nCellsX-1):(nCellsX+1), :] = FfaceR[:, 2:4, :]
-    GfaceFull[:, :, 0:2]                     = GfaceB[:, :, 3:5]
-    GfaceFull[:, :, (nCellsY-1):(nCellsY+1)] = GfaceT[:, :, 2:4]
+    FfaceFull[:, 0:2, :]                     = FfaceL[:, 1:3, :]
+    FfaceFull[:, (nCellsX-1):(nCellsX+1), :] = FfaceR[:, 0:2, :]
+    GfaceFull[:, :, 0:2]                     = GfaceB[:, :, 1:3]
+    GfaceFull[:, :, (nCellsY-1):(nCellsY+1)] = GfaceT[:, :, 0:2]
 
     # split flux arrays
     FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
@@ -381,27 +380,11 @@ for i in range(0,nSteps) :
 
     # tease out new state variables
     U = UNew
-    U = cutError(U, threshold)
+    # U = cutError(U, threshold)
     rho, vx, vy, P = getState4(U, gamma)
     t = t + minStep
 
     # print('cons1',cons1[i],'cons2',cons2[i],'cons3',cons3[i],'cons4',cons4[i])
-
-    # minrho = rho.min()
-    # if minrho <= 0.0 :
-    #     print('\n minrho = ',minrho)
-    #     break
-    # minvy = vy.min()
-    # if minvy < -threshold :
-    #     print('\n minvy = ',minvy)
-    #     break
-    # minP = P.min()
-    # if minP <= 0.0 :
-    #     print('\n minP = ',minP)
-    #     boolArray = P < 0.0
-    #     print(P)
-    #     print(PAnim[i,:,:])
-    #     break
 
     # save variables for animation
     rhoAnim[i+1,:,:] = rho
