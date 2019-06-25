@@ -14,12 +14,13 @@ parser.add_argument('--mirror', action='store_true')
 args = parser.parse_args()
 
 # set parameters
-nCellsX     = 10
-nCellsY     = 10
-nSteps      = 40
+viewY       = 0
+nCellsX     = 500
+nCellsY     = 100
+nSteps      = 1000
 mirrorCellX = 50
 mirrorCellY = 50
-downsample  = 10
+downsample  = 20
 gamma       = 1.4
 courantFac  = 0.5
 boxSizeX    = 5.0
@@ -32,7 +33,8 @@ rho2        = 1.0
 v1          = 0.0
 v2          = 0.0
 period      = 200
-theta       = 1.5 # 1 to 2, more diffusive for theta = 1
+theta       = 1.0 # 1 to 2, more diffusive for theta = 1
+threshold   = 1.0e-10
 
 # set initial conditions
 cellRight = int( nCellsX * xDiscont / boxSizeX )
@@ -54,11 +56,17 @@ y = ( np.arange(0,nCellsY) + 0.5 ) * dy
 cons1 = np.zeros(nSteps)
 cons2 = np.zeros(nSteps)
 cons3 = np.zeros(nSteps)
+cons4 = np.zeros(nSteps)
 rhoAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 vxAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 vyAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 PAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 tAnim = np.zeros(nSteps+1)
+
+def cutError(U, threshold=1.0e-15) :
+    boolArray = np.absolute(U) < threshold
+    U[boolArray] = 0.0
+    return U
 
 def minmod(x, y, z) :
     result = 0.25 * np.absolute( np.sign(x) + np.sign(y) ) \
@@ -76,16 +84,43 @@ def getE(P, gamma, rho, vx, vy) :
     E = rho * ( e + 0.5 * ( vx*vx + vy*vy ) )
     return E
 
+def getState(U, gamma) :
+    rho = U[0,:,:]
+    vx = U[1,:,:] / rho
+    vy = U[2,:,:] / rho
+    e = U[3,:,:] / rho - 0.5 * ( vx*vx + vy*vy )
+    P = ( gamma - 1.0 ) * rho * e
+    return rho, vx, vy, P
+
+def getStateArray(U, gamma) :
+    rho = U[0,:]
+    vx = U[1,:] / rho
+    vy = U[2,:] / rho
+    e = U[3,:] / rho - 0.5 * ( vx*vx + vy*vy )
+    P = ( gamma - 1.0 ) * rho * e
+    return rho, vx, vy, P
+
 def buildU(rho, vx, vy, P, gamma) :
     shape = rho.shape
     nx = shape[0]
     ny = shape[1]
     U = np.zeros([4,nx,ny])
     E = getE(P, gamma, rho, vx, vy)
-    U[0,0:nx,0:ny] = rho
-    U[1,0:nx,0:ny] = rho * vx
-    U[2,0:nx,0:ny] = rho * vy
-    U[3,0:nx,0:ny] = E
+    U[0,:,:] = rho
+    U[1,:,:] = rho * vx
+    U[2,:,:] = rho * vy
+    U[3,:,:] = E
+    return U
+
+def buildUArray(rho, vx, vy, P, gamma) :
+    shape = rho.shape
+    nx = shape[0]
+    U = np.zeros([4,nx])
+    E = getE(P, gamma, rho, vx, vy)
+    U[0,:] = rho
+    U[1,:] = rho * vx
+    U[2,:] = rho * vy
+    U[3,:] = E
     return U
 
 def buildFcent(rho, vx, vy, P) :
@@ -94,10 +129,10 @@ def buildFcent(rho, vx, vy, P) :
     ny = shape[1]
     Fcent = np.zeros([4,nx,ny])
     E = getE(P, gamma, rho, vx, vy)
-    Fcent[0,0:nx,0:ny] = rho * vx
-    Fcent[1,0:nx,0:ny] = rho * vx * vx + P
-    Fcent[2,0:nx,0:ny] = rho * vx * vy
-    Fcent[3,0:nx,0:ny] = ( E + P ) * vx
+    Fcent[0,:,:] = rho * vx
+    Fcent[1,:,:] = rho * vx * vx + P
+    Fcent[2,:,:] = rho * vx * vy
+    Fcent[3,:,:] = ( E + P ) * vx
     return Fcent
 
 def buildGcent(rho, vx, vy, P) :
@@ -106,10 +141,10 @@ def buildGcent(rho, vx, vy, P) :
     ny = shape[1]
     Gcent = np.zeros([4,nx,ny])
     E = getE(P, gamma, rho, vx, vy)
-    Gcent[0,0:nx,0:ny] = rho * vy
-    Gcent[1,0:nx,0:ny] = rho * vx * vy
-    Gcent[2,0:nx,0:ny] = rho * vy * vy + P
-    Gcent[3,0:nx,0:ny] = ( E + P ) * vy
+    Gcent[0,:,:] = rho * vy
+    Gcent[1,:,:] = rho * vx * vy
+    Gcent[2,:,:] = rho * vy * vy + P
+    Gcent[3,:,:] = ( E + P ) * vy
     return Gcent
 
 def getCons(U) :
@@ -122,16 +157,16 @@ def getCons(U) :
 def splitScalarX(array) :
     shape = array.shape
     nx = shape[0]
-    arrayB = array[0:nx-1, :]
-    arrayT = array[1:nx, :]
-    return arrayB, arrayT
+    arrayL = array[0:nx-1, :]
+    arrayR = array[1:nx, :]
+    return arrayL, arrayR
 
 def splitScalarY(array) :
     shape = array.shape
     ny = shape[1]
-    arrayL = array[:, 0:ny-1]
-    arrayR = array[:, 1:ny]
-    return arrayL, arrayR
+    arrayB = array[:, 0:ny-1]
+    arrayT = array[:, 1:ny]
+    return arrayB, arrayT
 
 def splitVectorX(array) :
     shape = array.shape
@@ -155,14 +190,6 @@ def max3(array1, array2) :
     arrayMax = np.maximum( 0., np.maximum( array1, array2 ) )
     return arrayMax
 
-def getState(U, gamma) :
-    rho = U[0,:,:]
-    vx = U[1,:,:] / rho
-    vy = U[2,:,:] / rho
-    e = U[3,:,:] / rho - 0.5 * ( vx*vx + vy*vy )
-    P = ( gamma - 1.0 ) * rho * e
-    return rho, vx, vy, P
-
 def splitReconX(var) :
     shape = var.shape
     nx = shape[0]
@@ -181,21 +208,31 @@ def splitReconY(var) :
     varp2 = var[:, 3:ny]
     return varm1, var0, varp1, varp2
 
-def flipVelX(U) :
-    try:
-        U[1,:,:] = -U[1,:,:]
-    except:
-        U[1,:] = -U[1,:]
-    return U
+def flipVelScalarX(U, gamma) :
+    rho, vx, vy, P = getStateArray(U, gamma)
+    vx = -vx
+    Uflip = buildUArray(rho, vx, vy, P, gamma)
+    return Uflip
 
-def flipVelY(U) :
-    try:
-        U[2,:,:] = -U[2,:,:]
-    except:
-        U[2,:] = -U[2,:]
-    return U
+def flipVelScalarY(U, gamma) :
+    rho, vx, vy, P = getStateArray(U, gamma)
+    vy = -vy
+    ULflip = buildUArray(rho, vx, vy, P, gamma)
+    return ULflip
 
-def getEdgeStates(U) :
+def flipVelVectorX(U, gamma) :
+    rho, vx, vy, P = getState(U, gamma)
+    vx = -vx
+    Uflip = buildU(rho, vx, vy, P, gamma)
+    return Uflip
+
+def flipVelVectorY(U, gamma) :
+    rho, vx, vy, P = getState(U, gamma)
+    vy = -vy
+    Uflip = buildU(rho, vx, vy, P, gamma)
+    return Uflip
+
+def getEdgeStates(U, gamma) :
     shape = U.shape
     nx = shape[1]
     ny = shape[2]
@@ -205,10 +242,10 @@ def getEdgeStates(U) :
     UB = U[:, :, 0]
     UT = U[:, :, ny-1]
 
-    ULflip = flipVelX(UL)
-    URflip = flipVelX(UR)
-    UBflip = flipVelY(UB)
-    UTflip = flipVelY(UT)
+    ULflip = flipVelScalarX(UL, gamma)
+    URflip = flipVelScalarX(UR, gamma)
+    UBflip = flipVelScalarY(UB, gamma)
+    UTflip = flipVelScalarY(UT, gamma)
 
     UL2 = np.zeros((4, 2, ny))
     UL2[:, 0, :] = ULflip
@@ -238,10 +275,10 @@ def getEdgeStatesRecon(U) :
     UB = U[:, :, 0:3]
     UT = U[:, :, (ny-3):ny]
 
-    ULflip = flipVelX(UL)
-    URflip = flipVelX(UR)
-    UBflip = flipVelY(UB)
-    UTflip = flipVelY(UT)
+    ULflip = flipVelVectorX(UL)
+    URflip = flipVelVectorX(UR)
+    UBflip = flipVelVectorY(UB)
+    UTflip = flipVelVectorY(UT)
 
     UL2 = np.zeros((4, 6, ny))
     UL2[:, 0:3, :] = ULflip
@@ -382,7 +419,7 @@ def getL(U, gamma, dx, dy) :
     FfaceI, GfaceI, alphaMaxI = getFlux(U, gamma)
 
     # get flux on edges
-    UL, UR, UB, UT = getEdgeStates(U)
+    UL, UR, UB, UT = getEdgeStates(U, gamma)
     FfaceL, GfaceL, alphaMaxL = getFlux(UL, gamma)
     FfaceR, GfaceR, alphaMaxR = getFlux(UR, gamma)
     FfaceB, GfaceB, alphaMaxB = getFlux(UB, gamma)
@@ -401,6 +438,9 @@ def getL(U, gamma, dx, dy) :
     FfaceFull[:, nCellsX, :]   = FfaceR[:,0,:]
     GfaceFull[:, :, 0]         = GfaceB[:,:,0]
     GfaceFull[:, :, nCellsY]   = GfaceT[:,:,0]
+
+    # FfaceFull = cutError(FfaceFull)
+    # GfaceFull = cutError(GfaceFull)
 
     # split flux arrays
     FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
@@ -455,10 +495,10 @@ U = buildU(rho, vx, vy, P, gamma)
 rho, vx, vy, P = getState(U, gamma)
 
 # save variables for animation
-rhoAnim[0,:] = rho
-vxAnim[0,:] = vx
-vyAnim[0,:] = vy
-PAnim[0,:] = P
+rhoAnim[0,:,:] = rho
+vxAnim[0,:,:] = vx
+vyAnim[0,:,:] = vy
+PAnim[0,:,:] = P
 tAnim[0] = t
 
 for i in range(0,nSteps) :
@@ -467,7 +507,7 @@ for i in range(0,nSteps) :
     stdout.flush()
 
     # conserved variables
-    # cons1[i], cons2[i], cons3[i] = getCons(U)
+    cons1[i], cons2[i], cons3[i], cons4[i] = getCons(U)
 
     # do Riemann solve
     if args.recon :
@@ -505,19 +545,94 @@ for i in range(0,nSteps) :
 
     # tease out new state variables
     U = UNew
+    U = cutError(U, threshold)
     rho, vx, vy, P = getState(U, gamma)
     t = t + minStep
 
+    # print('cons1',cons1[i],'cons2',cons2[i],'cons3',cons3[i],'cons4',cons4[i])
+
+    # minrho = rho.min()
+    # if minrho <= 0.0 :
+    #     print('\n minrho = ',minrho)
+    #     break
+    # minvy = vy.min()
+    # if minvy < -threshold :
+    #     print('\n minvy = ',minvy)
+    #     break
+    # minP = P.min()
+    # if minP <= 0.0 :
+    #     print('\n minP = ',minP)
+    #     boolArray = P < 0.0
+    #     print(P)
+    #     print(PAnim[i,:,:])
+    #     break
+
     # save variables for animation
-    rhoAnim[i+1,:] = rho
-    vxAnim[i+1,:] = vx
-    vyAnim[i+1,:] = vy
-    PAnim[i+1,:] = P
+    rhoAnim[i+1,:,:] = rho
+    vxAnim[i+1,:,:] = vx
+    vyAnim[i+1,:,:] = vy
+    PAnim[i+1,:,:] = P
     tAnim[i+1] = t
 
 stdout.write('\nDone crunching numbers\n')
 
-print('rho ',rho)
-print('vx ',vx)
-print('vy ',vy)
-print('P ',P)
+# downsample timesteps for plotting
+rhoAnim = rhoAnim[::downsample,:,:]
+vxAnim = vxAnim[::downsample,:,:]
+vyAnim = vyAnim[::downsample,:,:]
+PAnim = PAnim[::downsample,:,:]
+tAnim = tAnim[::downsample]
+nFrames = len(tAnim)
+
+# find some plot limits
+rhoMax = rhoAnim.max()
+vxMin = vxAnim.min()
+vxMax = vxAnim.max()
+vyMin = vyAnim.min()
+vyMax = vyAnim.max()
+PMax = PAnim.max()
+
+plt.clf()
+fig = plt.figure(figsize=(9,9))
+
+def animate(i) :
+    plt.clf()
+
+    plt.subplot(2,2,1)
+    plt.scatter(x,rhoAnim[i,:,viewY],s=1)
+    plt.axis([0.01,0.01+boxSizeX,0.0,rhoMax])
+    # plt.axvline( x=x[mirrorCell-1], c='k' )
+    plt.xlabel('x')
+    plt.ylabel('Density')
+    plt.title('t = ' + str(tAnim[i]))
+
+    plt.subplot(2,2,2)
+    plt.scatter(x,PAnim[i,:,viewY],s=1)
+    plt.axis([0.01,0.01+boxSizeX,0.0,PMax])
+    # plt.axvline( x=x[mirrorCell-1], c='k' )
+    plt.xlabel('x')
+    plt.ylabel('Pressure')
+
+    plt.subplot(2,2,3)
+    plt.scatter(x,vxAnim[i,:,viewY],s=1)
+    plt.axis([0.01,0.01+boxSizeX,vxMin,vxMax])
+    # plt.axvline( x=x[mirrorCell-1], c='k' )
+    plt.xlabel('x')
+    plt.ylabel('x Velocity')
+
+    plt.subplot(2,2,4)
+    plt.scatter(x,vyAnim[i,:,viewY],s=1)
+    # plt.axis([0.01,0.01+boxSizeX,vyMin,vyMax])
+    plt.axis([0.01,0.01+boxSizeX,-10.0,10.0])
+    # plt.axvline( x=x[mirrorCell-1], c='k' )
+    plt.xlabel('x')
+    plt.ylabel('y Velocity')
+
+    plt.tight_layout()
+
+anim = animation.FuncAnimation(fig, animate, frames = nFrames, interval = period, repeat = False)
+saveas = 'hydrout.mp4'
+anim.save(saveas)
+print('Saved animation ' + saveas)
+
+plt.clf()
