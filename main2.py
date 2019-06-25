@@ -15,12 +15,12 @@ parser.add_argument('--mirror', action='store_true')
 args = parser.parse_args()
 
 # set parameters
-viewY       = 25
+viewY       = 25 # index
 nCellsX     = 400
 nCellsY     = 50
-nSteps      = 1500
-mirrorCellX = 50
-mirrorCellY = 50
+nSteps      = 500
+mirrorCellX = 200 # index
+mirrorCellY = 25
 downsample  = 50
 gamma       = 1.4
 courantFac  = 0.5
@@ -63,6 +63,68 @@ vxAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 vyAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 PAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 tAnim = np.zeros(nSteps+1)
+
+def getMirrorSides(U, gamma mirrorCellX, mirrorCellY) :
+    square = U[:, (mirrorCellX-1):(mirrorCellX+2), (mirrorCellY-1):(mirrorCellY+2)]
+    left   = square[:, 0:2, 1]
+    right  = square[:, 1:3, 1]
+    bottom = square[:, 1, 0:2]
+    top    = square[:, 1, 1:3]
+
+    leftFlip   = flipVelVectorX(left[:, 0, :], gamma)
+    rightFlip  = flipVelVectorX(right[:, 1, :], gamma)
+    bottomFlip = flipVelVectorY(bottom[:, :, 0], gamma)
+    topFlip    = flipVelVectorY(top[:, :, 1], gamma)
+
+    left[:, 1, :]   = leftFlip
+    right[:, 0, :]  = rightFlip
+    bottom[:, :, 1] = bottomFlip
+    top[:, :, 0]    = topFlip
+
+    return left, right, bottom, top
+
+def getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY) :
+    square = U[:, (mirrorCellX-3):(mirrorCellX+4), (mirrorCellY-3):(mirrorCellY+4)]
+    left   = square[:, 0:5, 3]
+    right  = square[:, 2:7, 3]
+    bottom = square[:, 3, 0:5]
+    top    = square[:, 3, 2:7]
+
+    leftFlip   = flipVelVectorX(left[:, 1:3, :], gamma)
+    rightFlip  = flipVelVectorX(right[:, 2:4, :], gamma)
+    bottomFlip = flipVelVectorY(bottom[:, :, 1:3], gamma)
+    topFlip    = flipVelVectorY(top[:, :, 2:4], gamma)
+
+    left[:, 3:5, :]   = leftFlip
+    right[:, 0:2, :]  = rightFlip
+    bottom[:, :, 3:5] = bottomFlip
+    top[:, :, 0:2]    = topFlip
+
+    return left, right, bottom, top
+
+def getMirrorFlux(U, gamma, mirrorCellX, mirrorCellY) :
+    left, right, bottom, top = getMirrorSides(U, gamma, mirrorCellX, mirrorCellY)
+    FfaceL, GfaceL, alphaMaxL = getFlux(left, gamma)
+    FfaceR, GfaceR, alphaMaxR = getFlux(right, gamma)
+    FfaceB, GfaceB, alphaMaxB = getFlux(bottom, gamma)
+    FfaceT, GfaceT, alphaMaxT = getFlux(top, gamma)
+    alphaMax = max( [alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
+    return FfaceL, FfaceR, GfaceB, GfaceT, alphaMax
+
+def getMirrorFluxRecon(U, gamma, mirrorCellX, mirrorCellY) :
+    left, right, bottom, top = getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY)
+    FfaceL, GfaceL, alphaMaxL = getFluxRecon(left, gamma)
+    FfaceR, GfaceR, alphaMaxR = getFluxRecon(right, gamma)
+    FfaceB, GfaceB, alphaMaxB = getFluxRecon(bottom, gamma)
+    FfaceT, GfaceT, alphaMaxT = getFluxRecon(top, gamma)
+    alphaMax = max( [alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
+
+    FfaceL = FfaceL[:, 1:3, :]
+    FfaceR = FfaceR[:, 1:3, :]
+    GfaceB = GfaceB[:, :, 1:3]
+    GfaceT = GfaceT[:, :, 1:3]
+
+    return FfaceL, FfaceR, GfaceB, GfaceT, alphaMax
 
 def getEdgeStates(U, gamma) :
     shape = U.shape
@@ -260,9 +322,6 @@ def getL(U, gamma, dx, dy) :
     FfaceB, GfaceB, alphaMaxB = getFlux(UB, gamma)
     FfaceT, GfaceT, alphaMaxT = getFlux(UT, gamma)
 
-    # find the overall largest alpha
-    alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
-
     # construct the full flux arrays
     FfaceFull = np.zeros((4, nCellsX+1, nCellsY))
     GfaceFull = np.zeros((4, nCellsX, nCellsY+1))
@@ -274,12 +333,22 @@ def getL(U, gamma, dx, dy) :
     GfaceFull[:, :, 0]         = GfaceB[:,:,0]
     GfaceFull[:, :, nCellsY]   = GfaceT[:,:,0]
 
+    if args.mirror :
+        FfaceL_mirror, FfaceR_mirror, GfaceB_mirror, GfaceT_mirror, alphaMax_mirror = getMirrorFlux(U, gamma, mirrorCellX, mirrorCellY)
+        FfaceFull[:, mirrorCellX, mirrorCellY]   = FfaceL_mirror
+        FfaceFull[:, mirrorCellX+1, mirrorCellY] = FfaceR_mirror
+        GfaceFull[:, mirrorCellX, mirrorCellY]   = GfaceB_mirror
+        GfaceFull[:, mirrorCellX, mirrorCellY+1] = GfaceT_mirror
+
     # FfaceFull = cutError(FfaceFull)
     # GfaceFull = cutError(GfaceFull)
 
     # split flux arrays
     FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
     GfaceFullB, GfaceFullT = splitVectorY(GfaceFull)
+
+    # find the overall largest alpha
+    alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT, alphaMax_mirror] )
 
     # find time derivatives
     L = - ( FfaceFullR - FfaceFullL ) / dx - ( GfaceFullT - GfaceFullB ) / dy
@@ -301,9 +370,6 @@ def getLRecon(U, gamma, dx, dy) :
     FfaceB, GfaceB, alphaMaxB = getFluxRecon(UB, gamma)
     FfaceT, GfaceT, alphaMaxT = getFluxRecon(UT, gamma)
 
-    # find the overall largest alpha
-    alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
-
     # construct the full flux arrays
     FfaceFull = np.zeros((4, nCellsX+1, nCellsY))
     GfaceFull = np.zeros((4, nCellsX, nCellsY+1))
@@ -315,9 +381,19 @@ def getLRecon(U, gamma, dx, dy) :
     GfaceFull[:, :, 0:2]                     = GfaceB[:, :, 1:3]
     GfaceFull[:, :, (nCellsY-1):(nCellsY+1)] = GfaceT[:, :, 0:2]
 
+    if args.mirror :
+        FfaceL_mirror, FfaceR_mirror, GfaceB_mirror, GfaceT_mirror, alphaMax_mirror = getMirrorFluxRecon(U, gamma, mirrorCellX, mirrorCellY)
+        FfaceFull[:, (mirrorCellX-1):(mirrorCellX+1), mirrorCellY] = FfaceL_mirror
+        FfaceFull[:, (mirrorCellX+1):(mirrorCellX+3), mirrorCellY] = FfaceR_mirror
+        GfaceFull[:, mirrorCellX, (mirrorCellY-1):(mirrorCellY+1)] = GfaceB_mirror
+        GfaceFull[:, mirrorCellX, (mirrorCellY+1):(mirrorCellY+3)] = GfaceT_mirror
+
     # split flux arrays
     FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
     GfaceFullB, GfaceFullT = splitVectorY(GfaceFull)
+
+    # find the overall largest alpha
+    alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT, alphaMax_mirror] )
 
     # find time derivatives
     L = - ( FfaceFullR - FfaceFullL ) / dx - ( GfaceFullT - GfaceFullB ) / dy
