@@ -130,7 +130,7 @@ def getStateArray(U, gamma) :
     P = ( gamma - 1.0 ) * rho * e
     return rho, vx, vy, P
 
-def getCons3(U) :
+def getCons3(U, nCells) :
     cons1 = U[0,1:(nCells-1)].sum()
     cons2 = U[1,1:(nCells-1)].sum()
     cons3 = U[2,1:(nCells-1)].sum()

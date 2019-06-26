@@ -164,7 +164,7 @@ for i in range(0,nSteps) :
     stdout.flush()
 
     # conserved variables
-    # cons1[i], cons2[i], cons3[i] = getCons3(U)
+    # cons1[i], cons2[i], cons3[i] = getCons3(U, nCells)
 
     # do Riemann solve
     if args.recon :
