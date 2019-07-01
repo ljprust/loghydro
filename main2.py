@@ -21,10 +21,10 @@ args = parser.parse_args()
 viewY       = 22 # index
 nCellsX     = 400
 nCellsY     = 50
-nSteps      = 1500
+nSteps      = 500
 mirrorCellX = 300 # index
 mirrorCellY = 25
-downsample  = 50
+downsample  = 100
 gamma       = 1.4
 courantFac  = 0.5
 boxSizeX    = 5.0
@@ -537,11 +537,13 @@ tAnim = tAnim[::downsample]
 nFrames = len(tAnim)
 
 # find some plot limits
+rhoMin = rhoAnim.min()
 rhoMax = rhoAnim.max()
 vxMin = vxAnim.min()
 vxMax = vxAnim.max()
 vyMin = vyAnim.min()
 vyMax = vyAnim.max()
+PMin = PAnim.min()
 PMax = PAnim.max()
 
 plt.clf()
@@ -588,3 +590,23 @@ anim.save(saveas)
 print('Saved animation ' + saveas)
 
 plt.clf()
+
+def makeAnim(name, varAnim, varMin, varMax, nFrames, period) :
+    plt.clf()
+    varAnim = np.transpose( varAnim, (0,2,1) )
+    fig = plt.figure(figsize=(9,9))
+    ims = []
+    for i in range(0,nFrames) :
+        im = plt.imshow( varAnim[i,:,:], vmin=varMin, vmax=varMax, interpolation='none', origin='lower' )
+        ims.append([im])
+    anim = animation.ArtistAnimation(fig, ims, interval = period, repeat = False)
+    saveas = name + '.mp4'
+    anim.save(saveas)
+    plt.clf()
+
+makeAnim('rhohist', rhoAnim, rhoMin, rhoMax, nFrames, period)
+makeAnim('vxhist',  vxAnim,  vxMin,  vxMax,  nFrames, period)
+makeAnim('vyhist',  vyAnim,  vyMin,  vyMax,  nFrames, period)
+makeAnim('Phist',   PAnim,   PMin,   PMax,   nFrames, period)
+
+print('Saved histograms')
