@@ -178,19 +178,26 @@ for i in range(0,nSteps) :
 
     # propagate charges
     if args.rk :
+        # use 3rd-order RK time integration
+
         U1 = U + minStep * L
+
+        # reset U1
         U1 = resetGhosts(U1)
         U1 = resetMirror(U1, args.mirror, mirrorCell)
 
+        # do Riemann solve
         if args.recon :
             L1, alphaMax1 = RiemannRecon(U1, gamma, deltax)
         else :
             L1, alphaMax1 = Riemann(U1, gamma, deltax)
 
+        # reset U2
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
         U2 = resetGhosts(U2)
         U2 = resetMirror(U2, args.mirror, mirrorCell)
 
+        # do Riemann solve
         if args.recon :
             L2, alphaMax2 = RiemannRecon(U2, gamma, deltax)
         else :
@@ -229,9 +236,9 @@ vMin = vAnim.min()
 vMax = vAnim.max()
 PMax = PAnim.max()
 
+# animate the output
 plt.clf()
 fig = plt.figure(figsize=(9,9))
-
 def animate(i) :
     plt.clf()
 

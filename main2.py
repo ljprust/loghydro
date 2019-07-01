@@ -15,13 +15,14 @@ parser = argparse.ArgumentParser(prog='PROG')
 parser.add_argument('--rk', action='store_true')
 parser.add_argument('--recon', action='store_true')
 parser.add_argument('--mirror', action='store_true')
+parser.add_argument('--corner', action='store_true')
 args = parser.parse_args()
 
 # set parameters
 viewY       = 22 # index
 nCellsX     = 400
-nCellsY     = 50
-nSteps      = 500
+nCellsY     = 400
+nSteps      = 1500
 mirrorCellX = 300 # index
 mirrorCellY = 25
 downsample  = 100
@@ -30,6 +31,7 @@ courantFac  = 0.5
 boxSizeX    = 5.0
 boxSizeY    = 5.0
 xDiscont    = 2.0
+yDiscont    = 2.0
 P1          = 100.0
 P2          = 1.0
 rho1        = 10.0
@@ -42,15 +44,19 @@ threshold   = 1.0e-100
 
 # set initial conditions
 cellRight = int( nCellsX * xDiscont / boxSizeX )
+cellTop   = int( nCellsY * yDiscont / boxSizeY )
 
 P = np.ones((nCellsX, nCellsY)) * P1
 rho = np.ones((nCellsX, nCellsY)) * rho1
-vx = np.ones((nCellsX, nCellsY)) * v1
+vx = np.zeros((nCellsX, nCellsY))
 vy = np.zeros((nCellsX, nCellsY))
 
-P[ cellRight:nCellsX, : ] = P2
+P[   cellRight:nCellsX, : ] = P2
 rho[ cellRight:nCellsX, : ] = rho2
-vx[ cellRight:nCellsX, : ] = v2
+
+if args.corner :
+    P[   :, cellTop:nCellsY ] = P2
+    rho[ :, cellTop:nCellsY ] = rho2
 
 # set positions and widths
 dx = boxSizeX / float(nCellsX)
@@ -70,12 +76,18 @@ PAnim = np.zeros([nSteps+1,nCellsX,nCellsY])
 tAnim = np.zeros(nSteps+1)
 
 def getMirrorSides(U, gamma, mirrorCellX, mirrorCellY) :
+    # get groups of cells on each side of reflective cell
+
+    # cut a square around the reflective cell
     square = U[:, (mirrorCellX-1):(mirrorCellX+2), (mirrorCellY-1):(mirrorCellY+2)][:]
+
+    # separate into regions on all sides (1x2 or 2x1)
     left   = square[:, 0:2, 1:2].copy()
     right  = square[:, 1:3, 1:2].copy()
     bottom = square[:, 1:2, 0:2].copy()
     top    = square[:, 1:2, 1:3].copy()
 
+    # make copies to get around dumb Python errors
     leftFlip   = left.copy()
     rightFlip  = right.copy()
     bottomFlip = bottom.copy()
@@ -86,11 +98,13 @@ def getMirrorSides(U, gamma, mirrorCellX, mirrorCellY) :
     bottomTot = bottom.copy()
     topTot    = top.copy()
 
+    # flip velocities inside ghost cells
     leftFlip   = flipVelX(leftFlip)
     rightFlip  = flipVelX(rightFlip)
     bottomFlip = flipVelY(bottomFlip)
     topFlip    = flipVelY(topFlip)
 
+    # put it all together
     leftTot[:, 1, :]   = leftFlip[:, 0, :]
     rightTot[:, 0, :]  = rightFlip[:, 1, :]
     bottomTot[:, :, 1] = bottomFlip[:, :, 0]
@@ -99,12 +113,19 @@ def getMirrorSides(U, gamma, mirrorCellX, mirrorCellY) :
     return leftTot, rightTot, bottomTot, topTot
 
 def getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY) :
+    # get groups of cells on each side of reflective cell
+
+    # cut a square around the reflective cell
     square = U[:, (mirrorCellX-3):(mirrorCellX+4), (mirrorCellY-3):(mirrorCellY+4)]
+
+    # separate into regions on all sides (1x5 or 5x1)
+    # each has 3 real cells and 2 ghost ones
     left   = square[:, 0:5, 3:4].copy()
     right  = square[:, 2:7, 3:4].copy()
     bottom = square[:, 3:4, 0:5].copy()
     top    = square[:, 3:4, 2:7].copy()
 
+    # make copies to get around dumb Python errors
     leftFlip   = left.copy()
     rightFlip  = right.copy()
     bottomFlip = bottom.copy()
@@ -115,11 +136,13 @@ def getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY) :
     bottomTot = bottom.copy()
     topTot    = top.copy()
 
+    # flip velocities inside ghost cells
     leftFlip   = flipVelX(leftFlip[:, 1:3, :])
     rightFlip  = flipVelX(rightFlip[:, 2:4, :])
     bottomFlip = flipVelY(bottomFlip[:, :, 1:3])
     topFlip    = flipVelY(topFlip[:, :, 2:4])
 
+    # put it all together
     leftTot[:, 3:5, :]   = leftFlip
     rightTot[:, 0:2, :]  = rightFlip
     bottomTot[:, :, 3:5] = bottomFlip
@@ -128,44 +151,65 @@ def getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY) :
     return leftTot, rightTot, bottomTot, topTot
 
 def getMirrorFlux(U, gamma, mirrorCellX, mirrorCellY) :
+    # get fluxes around the reflective cell
+
+    # get clumps of cells on all sides of mirror
     left, right, bottom, top = getMirrorSides(U, gamma, mirrorCellX, mirrorCellY)
+
+    # get fluxes from each clump
     FfaceL, GfaceL, alphaMaxL = getFlux(left, gamma)
     FfaceR, GfaceR, alphaMaxR = getFlux(right, gamma)
     FfaceB, GfaceB, alphaMaxB = getFlux(bottom, gamma)
     FfaceT, GfaceT, alphaMaxT = getFlux(top, gamma)
+
+    # find the maximum mirror alpha
     alphaMax = max( [alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
+
     return FfaceL, FfaceR, GfaceB, GfaceT, alphaMax
 
 def getMirrorFluxRecon(U, gamma, mirrorCellX, mirrorCellY) :
+    # get fluxes around the reflective cell
+
+    # get clumps of cells on all sides of mirror
     left, right, bottom, top = getMirrorSidesRecon(U, gamma, mirrorCellX, mirrorCellY)
+
+    # get fluxes from each clump
     FfaceL, GfaceL, alphaMaxL = getFluxRecon(left, gamma)
     FfaceR, GfaceR, alphaMaxR = getFluxRecon(right, gamma)
     FfaceB, GfaceB, alphaMaxB = getFluxRecon(bottom, gamma)
     FfaceT, GfaceT, alphaMaxT = getFluxRecon(top, gamma)
+
+    # find the maximum mirror alpha
     alphaMax = max( [alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
 
     return FfaceL, FfaceR, GfaceB, GfaceT, alphaMax
 
 def getEdgeStates(U, gamma) :
+    # get the lines of cells around the edges of the box
+
     shape = U.shape
     nx = shape[1]
     ny = shape[2]
 
+    # separate the edge slices
     UL = U[:, 0:1, :].copy()
     UR = U[:, (nx-1):nx, :].copy()
     UB = U[:, :, 0:1].copy()
     UT = U[:, :, (ny-1):ny].copy()
 
+    # make some copies to be flipped
     ULflip = UL.copy()
     URflip = UR.copy()
     UBflip = UB.copy()
     UTflip = UT.copy()
 
+    # flip the velocities in the ghost cells
     ULflip = flipVelX(ULflip)
     URflip = flipVelX(URflip)
     UBflip = flipVelY(UBflip)
     UTflip = flipVelY(UTflip)
 
+    # put it all together
     UL2 = np.zeros((4, 2, ny))
     UL2[:, 0, :] = ULflip[:, 0, :]
     UL2[:, 1, :] = UL[:, 0, :]
@@ -185,25 +229,31 @@ def getEdgeStates(U, gamma) :
     return UL2, UR2, UB2, UT2
 
 def getEdgeStatesRecon(U, gamma) :
+    # get the lines of cells around the edges of the box
+
     shape = U.shape
     nx = shape[1]
     ny = shape[2]
 
+    # separate the edge slices
     UL = U[:, 0:3, :].copy()
     UR = U[:, (nx-3):nx, :].copy()
     UB = U[:, :, 0:3].copy()
     UT = U[:, :, (ny-3):ny].copy()
 
+    # make some copies to be flipped
     ULflip = UL.copy()
     URflip = UR.copy()
     UBflip = UB.copy()
     UTflip = UT.copy()
 
+    # flip the velocities in the ghost cells
     ULflip = flipVelX(ULflip)
     URflip = flipVelX(URflip)
     UBflip = flipVelY(UBflip)
     UTflip = flipVelY(UTflip)
 
+    # put it all together
     UL2 = np.zeros((4, 6, ny))
     UL2[:, 0:3, :] = ULflip
     UL2[:, 3:6, :] = UL
@@ -256,6 +306,7 @@ def getFlux(U, gamma) :
     alphaPy = max3( lambdaPy_B, lambdaPy_T )
     alphaMy = max3( -lambdaMy_B, -lambdaMy_T )
 
+    # find the maximum alpha (if it's defined)
     np.seterr( all='raise' )
     try :
         alphaMaxX = np.maximum( alphaPx.max(), alphaMx.max() )
@@ -333,6 +384,7 @@ def getFluxRecon(U, gamma) :
     alphaPy = max3( lambdaPB, lambdaPT )
     alphaMy = max3( -lambdaMB, -lambdaMT )
 
+    # find the maximum alpha (if it's defined)
     np.seterr( all='raise' )
     try :
         alphaMaxX = np.maximum( alphaPx.max(), alphaMx.max() )
@@ -382,6 +434,7 @@ def getL(U, gamma, dx, dy) :
     alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
 
     if args.mirror :
+        # get the fluxes from the sides of the mirror cell
         FfaceL_mirror, FfaceR_mirror, GfaceB_mirror, GfaceT_mirror, alphaMax_mirror = getMirrorFlux(U, gamma, mirrorCellX, mirrorCellY)
         FfaceFull[:, mirrorCellX, mirrorCellY]   = FfaceL_mirror[:, 0, 0]
         FfaceFull[:, mirrorCellX+1, mirrorCellY] = FfaceR_mirror[:, 0, 0]
@@ -390,6 +443,7 @@ def getL(U, gamma, dx, dy) :
 
         alphaMax = max( [alphaMax, alphaMax_mirror] )
 
+    # cut the error from the fluxes
     # FfaceFull = cutError(FfaceFull)
     # GfaceFull = cutError(GfaceFull)
 
@@ -432,6 +486,7 @@ def getLRecon(U, gamma, dx, dy) :
     alphaMax = max( [alphaMaxI, alphaMaxL, alphaMaxR, alphaMaxB, alphaMaxT] )
 
     if args.mirror :
+        # get the fluxes from the sides of the mirror cell
         FfaceL_mirror, FfaceR_mirror, GfaceB_mirror, GfaceT_mirror, alphaMax_mirror = getMirrorFluxRecon(U, gamma, mirrorCellX, mirrorCellY)
         FfaceFull[:, (mirrorCellX-1):(mirrorCellX+1), mirrorCellY] = FfaceL_mirror[:,:,0]
         FfaceFull[:, (mirrorCellX+1):(mirrorCellX+3), mirrorCellY] = FfaceR_mirror[:,:,0]
@@ -439,6 +494,10 @@ def getLRecon(U, gamma, dx, dy) :
         GfaceFull[:, mirrorCellX, (mirrorCellY+1):(mirrorCellY+3)] = GfaceT_mirror[:,0,:]
 
         alphaMax = max( [alphaMax, alphaMax_mirror] )
+
+    # cut the error from the fluxes
+    # FfaceFull = cutError(FfaceFull)
+    # GfaceFull = cutError(GfaceFull)
 
     # split flux arrays
     FfaceFullL, FfaceFullR = splitVectorX(FfaceFull)
@@ -467,7 +526,7 @@ for i in range(0,nSteps) :
     stdout.flush()
 
     # conserved variables
-    cons1[i], cons2[i], cons3[i], cons4[i] = getCons4(U)
+    # cons1[i], cons2[i], cons3[i], cons4[i] = getCons4(U)
 
     # do Riemann solve
     if args.recon :
@@ -484,11 +543,15 @@ for i in range(0,nSteps) :
 
     # propagate charges
     if args.rk :
+        # use 3rd-order RK time integration
+
         U1 = U + minStep * L
 
+        # clean up U1
         U1 = cutError(U1, threshold)
         U1 = smoothMirror(U1, args.mirror, mirrorCellX, mirrorCellY)
 
+        # do Riemann solve
         if args.recon :
             L1, alphaMax1 = getLRecon(U1, gamma, dx, dy)
         else :
@@ -496,9 +559,11 @@ for i in range(0,nSteps) :
 
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
 
+        # clean up U2
         U2 = cutError(U2, threshold)
         U2 = smoothMirror(U2, args.mirror, mirrorCellX, mirrorCellY)
 
+        # do Riemann solve
         if args.recon :
             L2, alphaMax2 = getLRecon(U2, gamma, dx, dy)
         else :
@@ -507,17 +572,18 @@ for i in range(0,nSteps) :
         UNew = 1./3. * U + 2./3. * U2 + 2./3. * minStep * L2
 
     else :
+        # 1st-order time integration
         UNew = U + minStep * L
 
-    # tease out new state variables
     U = UNew
+
+    # clean up U
     U = cutError(U, threshold)
     U = smoothMirror(U, args.mirror, mirrorCellX, mirrorCellY)
 
+    # tease out new state variables
     rho, vx, vy, P = getState4(U, gamma)
     t = t + minStep
-
-    # print('cons1',cons1[i],'cons2',cons2[i],'cons3',cons3[i],'cons4',cons4[i])
 
     # save variables for animation
     rhoAnim[i+1,:,:] = rho
@@ -546,9 +612,9 @@ vyMax = vyAnim.max()
 PMin = PAnim.min()
 PMax = PAnim.max()
 
+# animate one slice (in y) of the output
 plt.clf()
 fig = plt.figure(figsize=(9,9))
-
 def animate(i) :
     plt.clf()
 
@@ -604,6 +670,7 @@ def makeAnim(name, varAnim, varMin, varMax, nFrames, period) :
     anim.save(saveas)
     plt.clf()
 
+# animate 2-D histograms of the output
 makeAnim('rhohist', rhoAnim, rhoMin, rhoMax, nFrames, period)
 makeAnim('vxhist',  vxAnim,  vxMin,  vxMax,  nFrames, period)
 makeAnim('vyhist',  vyAnim,  vyMin,  vyMax,  nFrames, period)
