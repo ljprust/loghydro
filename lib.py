@@ -57,6 +57,11 @@ def resetMirror(U, doMirror, mirrorCell) :
 
     return U
 
+def smoothMirror(U, doMirror, mirrorCellX, mirrorCellY) :
+    if doMirror :
+        U[:, mirrorCellX, mirrorCellY] = U[:, mirrorCellX-1, mirrorCellY]
+    return U
+
 def getE3(P, gamma, rho, v) :
     e = P / (gamma - 1.) / rho
     E = rho * ( e + 0.5 * v * v )
@@ -242,29 +247,13 @@ def splitReconY(var) :
     varp2 = var[:, 3:ny]
     return varm1, var0, varp1, varp2
 
-def flipVelScalarX(U, gamma) :
-    rho, vx, vy, P = getStateArray(U, gamma)
-    vx = -vx
-    Uflip = buildUArray(rho, vx, vy, P, gamma)
-    return Uflip
+def flipVelX(array) :
+    array[1,:,:] = -array[1,:,:]
+    return array
 
-def flipVelScalarY(U, gamma) :
-    rho, vx, vy, P = getStateArray(U, gamma)
-    vy = -vy
-    ULflip = buildUArray(rho, vx, vy, P, gamma)
-    return ULflip
-
-def flipVelVectorX(U, gamma) :
-    rho, vx, vy, P = getState4(U, gamma)
-    vx = -vx
-    Uflip = buildU4(rho, vx, vy, P, gamma)
-    return Uflip
-
-def flipVelVectorY(U, gamma) :
-    rho, vx, vy, P = getState4(U, gamma)
-    vy = -vy
-    Uflip = buildU4(rho, vx, vy, P, gamma)
-    return Uflip
+def flipVelY(array) :
+    array[2,:,:] = -array[2,:,:]
+    return array
 
 def cutError(U, threshold=1.0e-15) :
     boolArray = np.absolute(U) < threshold
