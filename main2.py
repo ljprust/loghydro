@@ -19,16 +19,16 @@ parser.add_argument('--corner', action='store_true')
 args = parser.parse_args()
 
 # set parameters
-viewY       = 22 # index
-nCellsX     = 400
-nCellsY     = 400
-nSteps      = 1500
+viewY       = 2 # index
+nCellsX     = 24 # 240
+nCellsY     = 40 # 400
+nSteps      = 1000
 mirrorCellX = 300 # index
 mirrorCellY = 25
-downsample  = 100
+downsample  = 10
 gamma       = 1.4
-courantFac  = 0.5
-boxSizeX    = 5.0
+courantFac  = 0.1 # 0.5
+boxSizeX    = 3.0
 boxSizeY    = 5.0
 xDiscont    = 2.0
 yDiscont    = 2.0
@@ -48,15 +48,17 @@ cellTop   = int( nCellsY * yDiscont / boxSizeY )
 
 P = np.ones((nCellsX, nCellsY)) * P1
 rho = np.ones((nCellsX, nCellsY)) * rho1
-vx = np.zeros((nCellsX, nCellsY))
+vx = np.ones((nCellsX, nCellsY)) * v1
 vy = np.zeros((nCellsX, nCellsY))
 
 P[   cellRight:nCellsX, : ] = P2
 rho[ cellRight:nCellsX, : ] = rho2
+vx[  cellRight:nCellsX, : ] = 0.0
 
 if args.corner :
     P[   :, cellTop:nCellsY ] = P2
     rho[ :, cellTop:nCellsY ] = rho2
+    vx[  :, cellTop:nCellsY ] = 0.0
 
 # set positions and widths
 dx = boxSizeX / float(nCellsX)
@@ -611,7 +613,7 @@ vyMin = vyAnim.min()
 vyMax = vyAnim.max()
 PMin = PAnim.min()
 PMax = PAnim.max()
-
+'''
 # animate one slice (in y) of the output
 plt.clf()
 fig = plt.figure(figsize=(9,9))
@@ -621,7 +623,7 @@ def animate(i) :
     plt.subplot(2,2,1)
     plt.scatter(x,rhoAnim[i,:,viewY],s=1)
     plt.axis([0.01,0.01+boxSizeX,0.0,rhoMax])
-    plt.axvline( x=x[mirrorCellX], c='k' )
+    #plt.axvline( x=x[mirrorCellX], c='k' )
     plt.xlabel('x')
     plt.ylabel('Density')
     plt.title('t = ' + str(tAnim[i]))
@@ -629,14 +631,14 @@ def animate(i) :
     plt.subplot(2,2,2)
     plt.scatter(x,PAnim[i,:,viewY],s=1)
     plt.axis([0.01,0.01+boxSizeX,0.0,PMax])
-    plt.axvline( x=x[mirrorCellX], c='k' )
+    #plt.axvline( x=x[mirrorCellX], c='k' )
     plt.xlabel('x')
     plt.ylabel('Pressure')
 
     plt.subplot(2,2,3)
     plt.scatter(x,vxAnim[i,:,viewY],s=1)
     plt.axis([0.01,0.01+boxSizeX,vxMin,vxMax])
-    plt.axvline( x=x[mirrorCellX], c='k' )
+    #plt.axvline( x=x[mirrorCellX], c='k' )
     plt.xlabel('x')
     plt.ylabel('x Velocity')
 
@@ -644,7 +646,7 @@ def animate(i) :
     plt.scatter(x,vyAnim[i,:,viewY],s=1)
     # plt.axis([0.01,0.01+boxSizeX,vyMin,vyMax])
     plt.axis([0.01,0.01+boxSizeX,-10.0,10.0])
-    plt.axvline( x=x[mirrorCellX], c='k' )
+    #plt.axvline( x=x[mirrorCellX], c='k' )
     plt.xlabel('x')
     plt.ylabel('y Velocity')
 
@@ -654,13 +656,14 @@ anim = animation.FuncAnimation(fig, animate, frames = nFrames, interval = period
 saveas = 'hydrout.mp4'
 anim.save(saveas)
 print('Saved animation ' + saveas)
-
+'''
 plt.clf()
 
 def makeAnim(name, varAnim, varMin, varMax, nFrames, period) :
     plt.clf()
     varAnim = np.transpose( varAnim, (0,2,1) )
     fig = plt.figure(figsize=(9,9))
+    plt.axis('off')
     ims = []
     for i in range(0,nFrames) :
         im = plt.imshow( varAnim[i,:,:], vmin=varMin, vmax=varMax, interpolation='none', origin='lower' )
@@ -671,9 +674,9 @@ def makeAnim(name, varAnim, varMin, varMax, nFrames, period) :
     plt.clf()
 
 # animate 2-D histograms of the output
-makeAnim('rhohist', rhoAnim, rhoMin, rhoMax, nFrames, period)
-makeAnim('vxhist',  vxAnim,  vxMin,  vxMax,  nFrames, period)
-makeAnim('vyhist',  vyAnim,  vyMin,  vyMax,  nFrames, period)
-makeAnim('Phist',   PAnim,   PMin,   PMax,   nFrames, period)
+makeAnim('rhohist', rhoAnim, rhoMin, rhoMax*0.7, nFrames, period)
+#makeAnim('vxhist',  vxAnim,  vxMin,  vxMax,  nFrames, period)
+#makeAnim('vyhist',  vyAnim,  vyMin,  vyMax,  nFrames, period)
+#makeAnim('Phist',   PAnim,   PMin,   PMax,   nFrames, period)
 
 print('Saved histograms')

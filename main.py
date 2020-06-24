@@ -9,28 +9,28 @@ from sys import stdout
 from lib import *
 
 parser = argparse.ArgumentParser(prog='PROG')
-parser.add_argument('--rk', action='store_true')
-parser.add_argument('--recon', action='store_true')
-parser.add_argument('--mirror', action='store_true')
+parser.add_argument('--rk', action='store_true', help='3rd-order Runge-Kutta time integration')
+parser.add_argument('--recon', action='store_true', help='2nd-order spatial reconstruction')
+parser.add_argument('--mirror', action='store_true', help='set one cell as an internal boundary')
 args = parser.parse_args()
 
 # set parameters
-nCells     = 1000
-nSteps     = 100
-mirrorCell = 800
-downsample = 100
-gamma      = 1.4
-courantFac = 0.5
-boxSize    = 5.0
-xDiscont   = 2.0
-P1         = 100.0
-P2         = 1.0
-rho1       = 10.0
-rho2       = 1.0
-v1         = 0.0
-v2         = 0.0
-period     = 200
-theta      = 1.5 # 1 to 2, more diffusive for theta = 1
+nCells     = 1000  # number of cells
+nSteps     = 1000  # number of solution steps
+mirrorCell = 600   # index of internal boundary cell
+downsample = 100   # downsample number of timesteps for output
+gamma      = 1.4   # specific heat ratio
+courantFac = 0.5   # courant factor (less than 1)
+boxSize    = 5.0   # size of simulation box
+xDiscont   = 2.0   # initial position of discontinuity
+P1         = 100.0 # pressure on left
+P2         = 1.0   # pressure on right
+rho1       = 10.0  # density on left
+rho2       = 1.0   # density on right
+v1         = 0.0   # velocity on left
+v2         = 0.0   # velocity on right
+period     = 200   # period of output animations in ms
+theta      = 1.5   # 1 to 2, more diffusive for theta = 1
 
 # set initial conditions
 cellRight = int( nCells * xDiscont / boxSize )
@@ -54,7 +54,7 @@ mirrorCell = mirrorCell + 2
 # set positions and widths
 deltax = np.ones(nCells) * boxSize / float(nCells)
 dx = deltax[0]
-x = range(0,nCells) * dx + 0.5 * dx
+x = np.arange(0,nCells) * dx + 0.5 * dx
 
 # preallocate some arrays
 cons1 = np.zeros(nSteps)
@@ -222,6 +222,7 @@ for i in range(0,nSteps) :
     tAnim[i+1] = t
 
 stdout.write('\nDone crunching numbers\n')
+stdout.write('Writing output...\n')
 
 # downsample timesteps for plotting
 rhoAnim = rhoAnim[::downsample,:]
@@ -245,7 +246,8 @@ def animate(i) :
     plt.subplot(2,2,1)
     plt.scatter(x,rhoAnim[i,:],s=1)
     plt.axis([0.01,0.01+boxSize,0.0,rhoMax])
-    plt.axvline( x=x[mirrorCell-1], c='k' )
+    if (args.mirror):
+        plt.axvline( x=x[mirrorCell-1], c='k' )
     plt.xlabel('x')
     plt.ylabel('Density')
     plt.title('t = ' + str(tAnim[i]))
@@ -253,21 +255,23 @@ def animate(i) :
     plt.subplot(2,2,2)
     plt.scatter(x,PAnim[i,:],s=1)
     plt.axis([0.01,0.01+boxSize,0.0,PMax])
-    plt.axvline( x=x[mirrorCell-1], c='k' )
+    if (args.mirror):
+        plt.axvline( x=x[mirrorCell-1], c='k' )
     plt.xlabel('x')
     plt.ylabel('Pressure')
 
     plt.subplot(2,2,3)
     plt.scatter(x,vAnim[i,:],s=1)
     plt.axis([0.01,0.01+boxSize,vMin,vMax])
-    plt.axvline( x=x[mirrorCell-1], c='k' )
+    if (args.mirror):
+        plt.axvline( x=x[mirrorCell-1], c='k' )
     plt.xlabel('x')
     plt.ylabel('Velocity')
 
     plt.tight_layout()
 
 anim = animation.FuncAnimation(fig, animate, frames = nFrames, interval = period, repeat = False)
-saveas = 'hydrout.mp4'
+saveas = 'output.mp4'
 anim.save(saveas)
 print('Saved animation ' + saveas)
 
