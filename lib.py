@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.special as ss
 
 def addEdges(array, begin, end) :
     con = np.concatenate( ([begin],array,[end]), axis=0 )
@@ -14,6 +15,176 @@ def reconstruct(cm1, c0, cp1, cp2, theta) :
     cL = c0 + 0.5 * minmod( theta*(c0-cm1), 0.5*(cp1-cm1), theta*(cp1-c0) )
     cR = cp1 - 0.5 * minmod( theta*(cp1-c0), 0.5*(cp2-c0), theta*(cp2-cp1) )
     return cL, cR
+
+def getCovarianceMatrix(x_stencil, delta, R, l) :
+    denom = np.sqrt(2.0)*l/delta
+    stencilSize = R+R+1
+    C = np.zeros((stencilSize,stencilSize))
+    deltakh = np.zeros((stencilSize,stencilSize))
+    for k in range(0,stencilSize) :
+        for h in range(0,stencilSize) :
+            deltakh[k,h] = (x_stencil[k]-x_stencil[h])/delta
+    plusfactor = (deltakh+1.0)/denom
+    minusfactor = (deltakh-1.0)/denom
+    C = np.sqrt(np.pi)*l*l/delta/delta*((plusfactor*ss.erf(plusfactor)+
+    minusfactor*ss.erf(minusfactor))+1.0/np.sqrt(np.pi)*(np.exp(-plusfactor*plusfactor)
+    +np.exp(-minusfactor*minusfactor))-2.0*(deltakh/denom*ss.erf(deltakh/denom)
+    +1.0/np.sqrt(np.pi)*np.exp(-deltakh*deltakh/denom/denom)))
+    return C
+
+def getPredictionVector(x_stencil, xstar, delta, R, l) :
+    denom = np.sqrt(2.0)*l/delta
+    stencilSize = R+R+1
+    TT = np.zeros(stencilSize)
+    deltakstar = np.zeros(stencilSize)
+    for k in range(0,stencilSize) :
+        deltakstar[k] = (x_stencil[k]-xstar)/delta
+    TT = np.sqrt(np.pi/2.0)*l/delta*(ss.erf((deltakstar+0.5)/denom)
+    -ss.erf((deltakstar-0.5)/denom))
+    return TT
+
+def getWeightVector(C, TT) :
+    Cinv = np.linalg.inv(C)
+    zT = np.matmul(TT,Cinv)
+    return zT
+
+def reconstructGP(zT, U_stencil, hydroVariable) :
+    G = U_stencil[hydroVariable,:]
+    fstarbar = np.matmul(zT,G)
+    return fstarbar
+
+def RiemannGP(U, gamma, deltax, zTL, zTR, Rstencil) :
+    nCells = len(deltax)
+    nFaces = nCells-1
+
+    # extract cell-centered state variables
+    rho, v, P = getState3(U, gamma)
+
+    # initialize left and right states assuming 1st spatial order
+    rhoL, rhoR = splitScalar(rho)
+    vL, vR     = splitScalar(v)
+    PL, PR     = splitScalar(P)
+
+    for j in range(Rstencil, nFaces-Rstencil) :
+        U_stencilL = U[:,j-Rstencil:j+Rstencil+1]
+        U_stencilR = U[:,j-Rstencil+1:j+Rstencil+2]
+        rhoL[j] = reconstructGP(zTR, U_stencilL, 0)
+        rhoR[j] = reconstructGP(zTL, U_stencilR, 0)
+        vL[j]   = reconstructGP(zTR, U_stencilL, 1)
+        vR[j]   = reconstructGP(zTL, U_stencilR, 1)
+        PL[j]   = reconstructGP(zTR, U_stencilL, 2)
+        PR[j]   = reconstructGP(zTL, U_stencilR, 2)
+        if (j==50) :
+            print ' rho L R:',rhoL[j],rhoR[j]
+
+    # remake U and Fcent with reconstructed variables
+    UL = buildU3(rhoL, vL, PL, gamma)
+    UR = buildU3(rhoR, vR, PR, gamma)
+    FcentL = buildFcent3(rhoL, vL, PL, gamma)
+    FcentR = buildFcent3(rhoR, vR, PR, gamma)
+
+    # get sound speed
+    cL = getc(gamma, PL, rhoL)
+    cR = getc(gamma, PR, rhoR)
+
+    # find eigenvalues
+    lambdaP_L = vL + cL
+    lambdaP_R = vR + cR
+    lambdaM_L = vL - cL
+    lambdaM_R = vR - cR
+    alphaP = max3( lambdaP_L, lambdaP_R )
+    alphaM = max3( -lambdaM_L, -lambdaM_R )
+    alphaMax = np.maximum( alphaP.max(), alphaM.max() )
+
+    # find face fluxes
+    Fface = np.zeros([3,nCells+1])
+    Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
+    FfaceL, FfaceR = splitVector(Fface)
+
+    # find time derivatives
+    L = - ( FfaceR - FfaceL ) / deltax
+
+    return L, alphaMax
+
+def RiemannRecon(U, gamma, deltax, theta) :
+    nCells = len(deltax)
+
+    # extract state variables
+    rho, v, P = getState3(U, gamma)
+
+    # split state variables for reconstruction
+    rhom1, rho0, rhop1, rhop2 = splitRecon(rho)
+    vm1, v0, vp1, vp2 = splitRecon(v)
+    Pm1, P0, Pp1, Pp2 = splitRecon(P)
+
+    # do the reconstruction
+    rhoL, rhoR = reconstruct(rhom1, rho0, rhop1, rhop2, theta)
+    vL, vR = reconstruct(vm1, v0, vp1, vp2, theta)
+    PL, PR = reconstruct(Pm1, P0, Pp1, Pp2, theta)
+
+    # remake U and Fcent with reconstructed variables
+    UL = buildU3(rhoL, vL, PL, gamma)
+    UR = buildU3(rhoR, vR, PR, gamma)
+    FcentL = buildFcent3(rhoL, vL, PL, gamma)
+    FcentR = buildFcent3(rhoR, vR, PR, gamma)
+
+    # get sound speed
+    cL = getc(gamma, PL, rhoL)
+    cR = getc(gamma, PR, rhoR)
+
+    # find eigenvalues
+    lambdaP_L = vL + cL
+    lambdaP_R = vR + cR
+    lambdaM_L = vL - cL
+    lambdaM_R = vR - cR
+    alphaP = max3( lambdaP_L, lambdaP_R )
+    alphaM = max3( -lambdaM_L, -lambdaM_R )
+    alphaMax = np.maximum( alphaP.max(), alphaM.max() )
+
+    # find face fluxes
+    Fface = np.zeros([3,nCells+1])
+    Fface[:,2:nCells-1] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
+    FfaceL, FfaceR = splitVector(Fface)
+
+    # find time derivatives
+    L = - ( FfaceR - FfaceL ) / deltax
+
+    return L, alphaMax
+
+def Riemann(U, gamma, deltax) :
+    nCells = len(deltax)
+
+    # extract state variables
+    rho, v, P = getState3(U, gamma)
+
+    # get cell-centered fluxes
+    Fcent = buildFcent3(rho, v, P, gamma)
+
+    # split into left and right values
+    UL, UR = splitVector(U)
+    FcentL, FcentR = splitVector(Fcent)
+
+    # get sound speed
+    c = getc(gamma, P, rho)
+
+    # find eigenvalues
+    lambdaP = v + c
+    lambdaM = v - c
+    lambdaP_L, lambdaP_R = splitScalar(lambdaP)
+    lambdaM_L, lambdaM_R = splitScalar(lambdaM)
+    alphaP = max3( lambdaP_L, lambdaP_R )
+    alphaM = max3( -lambdaM_L, -lambdaM_R )
+    alphaMax = np.maximum( alphaP.max(), alphaM.max() )
+
+    # find fluxes at faces
+    Fface = np.zeros([3,nCells+1])
+    Fface[:,1:nCells] = ( alphaP * FcentL + alphaM * FcentR - alphaP * alphaM * (UR - UL) ) / ( alphaP + alphaM )
+    FfaceL, FfaceR = splitVector(Fface)
+
+    # find time derivatives
+    L = - ( FfaceR - FfaceL ) / deltax
+
+    return L, alphaMax
 
 def resetGhosts(U) :
     length = U.shape[1]
