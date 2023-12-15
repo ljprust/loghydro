@@ -16,36 +16,27 @@ parser.add_argument('--gp', action='store_true', help='use GP reconstruction')
 args = parser.parse_args()
 
 # set parameters
-nCells     = 96  # number of cells
-nSteps     = 50  # number of solution steps
+nCells     = 800  # number of cells
+nSteps     = 500  # number of solution steps
 mirrorCell = 1000   # index of internal boundary cell
-downsample = 5   # downsample number of timesteps for output
-gamma      = 1.4   # specific heat ratio
-courantFac = 0.5   # courant factor (less than 1)
-boxSize    = 100.0   # size of simulation box
-xDiscont   = 2.0   # initial position of discontinuity
-P1         = 1.0 # 100.0 # pressure on left
-P2         = 1.0   # pressure on right
-rho1       = 1.0 # 10.0  # density on left
-rho2       = 1.0   # density on right
-v1         = 0.0   # velocity on left
-v2         = 0.0   # velocity on right
+downsample = 50  # downsample number of timesteps for output
+gamma      = 5.0/3.0   # specific heat ratio
+courantFac = 0.3   # courant factor (less than 1)
+boxSize    = 2.0   # size of simulation box
 period     = 200   # period of output animations in ms
-theta      = 1.5   # 1 to 2, more diffusive for theta = 1
+theta      = 1.5   # 1 to 2, more diffusive for theta = 1 (2nd order recon)
+Nghosts    = 10    # number of ghost cells on each end
 
 # GP parameters
-Rstencil = 1 # stencil radius in # of cells
-correlationLength = 4.0 # hyperparameter l
+Rstencil = 3 # stencil radius in # of cells
+correlationLength = 0.0075 # hyperparameter l
 
-# set initial conditions
-cellRight = int( nCells * xDiscont / boxSize )
-P = np.ones(nCells) * P1
-P[ cellRight:nCells ] = P2
-rho = np.ones(nCells) * rho1
-rho[ cellRight:nCells ] = rho2
-v = np.ones(nCells) * v1
-v[ cellRight:nCells ] = v2
+# initialize primitive variable arrays
+rho = np.ones(nCells)
+v   = np.ones(nCells)
+P   = np.ones(nCells)
 
+'''
 # add ghost cells
 P = addEdges(P, 1.0, 1.0)
 P = addEdges(P, 1.0, 1.0)
@@ -55,11 +46,17 @@ v = addEdges(v, 0.0, 0.0)
 v = addEdges(v, 0.0, 0.0)
 nCells = nCells + 4
 mirrorCell = mirrorCell + 2
+'''
 
 # set positions and widths
 deltax = np.ones(nCells) * boxSize / float(nCells)
 dx = deltax[0]
 x = np.arange(0,nCells) * dx + 0.5 * dx
+
+# apply initial conditions
+#rho, v, P =  shocktube(rho, v, P, nCells, boxSize, x, gamma)
+rho, v, P =   gaussian(rho, v, P, nCells, boxSize, x, gamma)
+#rho, v, P = linearWave(rho, v, P, nCells, boxSize, x, gamma)
 
 # preallocate some arrays
 cons1 = np.zeros(nSteps)
@@ -73,32 +70,33 @@ tAnim = np.zeros(nSteps+1)
 # initialize t, U
 t = 0.0
 U = buildU3(rho, v, P, gamma)
-U = resetGhosts(U)
+U = resetGhosts(U, Nghosts)
 U = resetMirror(U, args.mirror, mirrorCell)
 rho, v, P = getState3(U, gamma)
 
-# initialize weight vector for GP reconstructions
-if ((args.recon and args.gp) or (args.rk and args.gp)) :
-    print 'WARNING: GP unsupported with RK3 or 2nd order reconstruction!'
-stencilSize = Rstencil+Rstencil+1
-x_stencil = x[0:stencilSize]
-xstarL = 0.5*(x_stencil[Rstencil]+x_stencil[Rstencil-1])
-xstarR = 0.5*(x_stencil[Rstencil]+x_stencil[Rstencil+1])
-print x_stencil
-print xstarL, xstarR
-C = getCovarianceMatrix(x_stencil, dx, Rstencil, correlationLength)
-TTL = getPredictionVector(x_stencil, xstarL, dx, Rstencil, correlationLength)
-TTR = getPredictionVector(x_stencil, xstarR, dx, Rstencil, correlationLength)
-zTL = getWeightVector(C, TTL)
-zTR = getWeightVector(C, TTR)
-print 'zTL:',zTL
-print 'zTR:',zTR
+if (args.gp) :
+    # initialize weight vector for GP reconstructions
+    if (args.recon) :
+        print 'WARNING: GP and 2nd order reconstruction both set!'
+    stencilSize = Rstencil+Rstencil+1
+    x_stencil = x[0:stencilSize]
+    xstarL = 0.5*(x_stencil[Rstencil]+x_stencil[Rstencil-1])
+    xstarR = 0.5*(x_stencil[Rstencil]+x_stencil[Rstencil+1])
+    print x_stencil
+    print xstarL, xstarR
+    C = getCovarianceMatrix(x_stencil, dx, Rstencil, correlationLength)
+    TTL = getPredictionVector(x_stencil, xstarL, dx, Rstencil, correlationLength)
+    TTR = getPredictionVector(x_stencil, xstarR, dx, Rstencil, correlationLength)
+    zTL = getWeightVector(C, TTL)
+    zTR = getWeightVector(C, TTR)
+    print 'zTL:',zTL
+    print 'zTR:',zTR
 
 # save variables for animation
 rhoAnim[0,:] = rho
-vAnim[0,:] = v
-PAnim[0,:] = P
-tAnim[0] = t
+vAnim[0,:]   = v
+PAnim[0,:]   = P
+tAnim[0]     = t
 
 for i in range(0,nSteps) :
 
@@ -127,23 +125,27 @@ for i in range(0,nSteps) :
         U1 = U + minStep * L
 
         # reset U1
-        U1 = resetGhosts(U1)
+        U1 = resetGhosts(U1, Nghosts)
         U1 = resetMirror(U1, args.mirror, mirrorCell)
 
         # do Riemann solve
         if args.recon :
             L1, alphaMax1 = RiemannRecon(U1, gamma, deltax, theta)
+        elif args.gp :
+            L1, alphaMax1 = RiemannGP(U1, gamma, deltax, zTL, zTR, Rstencil)
         else :
             L1, alphaMax1 = Riemann(U1, gamma, deltax)
 
         # reset U2
         U2 = 0.75 * U + 0.25 * U1 + 0.25 * minStep * L1
-        U2 = resetGhosts(U2)
+        U2 = resetGhosts(U2, Nghosts)
         U2 = resetMirror(U2, args.mirror, mirrorCell)
 
         # do Riemann solve
         if args.recon :
             L2, alphaMax2 = RiemannRecon(U2, gamma, deltax, theta)
+        elif args.gp :
+            L2, alphaMax2 = RiemannGP(U2, gamma, deltax, zTL, zTR, Rstencil)
         else :
             L2, alphaMax2 = Riemann(U2, gamma, deltax)
 
@@ -154,10 +156,12 @@ for i in range(0,nSteps) :
 
     # tease out new state variables
     U = UNew
-    U = resetGhosts(U)
+    U = resetGhosts(U, Nghosts)
     U = resetMirror(U, args.mirror, mirrorCell)
     rho, v, P = getState3(U, gamma)
     t = t + minStep
+
+    checkSolutionGaussian(rho, nCells, x, t)
 
     # save variables for animation
     rhoAnim[i+1,:] = rho

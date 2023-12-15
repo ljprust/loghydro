@@ -1,6 +1,67 @@
 import numpy as np
 import scipy.special as ss
 
+def shocktube(rho, v, P, nCells, boxSize, x, gamma) :
+
+    xDiscont   = 0.5   # initial position of discontinuity
+    P1         = 1.0 # 100.0 # pressure on left
+    P2         = 1.0   # pressure on right
+    rho1       = 1.0 # 10.0  # density on left
+    rho2       = 1.0   # density on right
+    v1         = 0.0   # velocity on left
+    v2         = 0.0   # velocity on right
+
+    for i in range(0,nCells) :
+        rho[i] = rho1
+        v[i] = v1
+        P[i] = P1
+        if (x[i] > xDiscont) :
+            rho[i] = rho2
+            v[i]   = v2
+            P[i]   = P2
+    return rho, v, P
+
+def gaussian(rho, v, P, nCells, boxSize, x, gamma) :
+
+    x0 = 0.5
+    v0 = 1.0
+    P0 = 1.0/gamma
+    C1 = 0.1
+    C2 = 100.0
+
+    for i in range(0,nCells) :
+        rho[i] = 1.0 + C1*np.exp(-C2*(x[i]-x0)**2.0)
+        v[i]   = v0
+        P[i]   = P0
+
+    return rho, v, P
+
+def checkSolutionGaussian(rho, nCells, x, t) :
+
+    x0 = 0.5
+    v0 = 1.0
+    C1 = 0.1
+    C2 = 100.0
+
+    rhoAnalytic = 1.0 + C1*np.exp(-C2*(x-x0-v0*t)**2.0)
+    L1error = 1.0/float(nCells)*np.absolute(rho-rhoAnalytic).sum()
+    print ' L1 error:',L1error
+
+def linearWave(rho, v, P, nCells, boxSize, x, gamma) :
+
+    rho0 = 1.0
+    v0   = 0.0
+    P0   = 1.0/gamma
+    amplitude = 1.0e-3
+
+    kx = 2.0*np.pi/boxSize
+    for i in range(0,nCells) :
+        rho[i] = rho0 * (1.0 + amplitude*np.sin(kx*x[i]))
+        v[i]   = amplitude*np.cos(kx*x[i])
+        P[i]   = P0*gamma*kx * (1.0 + amplitude*np.cos(kx*x[i]))
+
+    return rho, v, P
+
 def addEdges(array, begin, end) :
     con = np.concatenate( ([begin],array,[end]), axis=0 )
     return con
@@ -48,17 +109,20 @@ def getWeightVector(C, TT) :
     zT = np.matmul(TT,Cinv)
     return zT
 
-def reconstructGP(zT, U_stencil, hydroVariable) :
-    G = U_stencil[hydroVariable,:]
-    fstarbar = np.matmul(zT,G)
-    return fstarbar
+def reconstructGP(zT, U_stencil, gamma) :
+    Grho, Gvel, Gpres = getState3(U_stencil, gamma)
+    fstarbarrho  = np.matmul(zT,Grho)
+    fstarbarvel  = np.matmul(zT,Gvel)
+    fstarbarpres = np.matmul(zT,Gpres)
+    return fstarbarrho, fstarbarvel, fstarbarpres
 
 def RiemannGP(U, gamma, deltax, zTL, zTR, Rstencil) :
+    Ucopy = np.copy(U) # need to stop python from retroactively changing stuff
     nCells = len(deltax)
     nFaces = nCells-1
 
     # extract cell-centered state variables
-    rho, v, P = getState3(U, gamma)
+    rho, v, P = getState3(Ucopy, gamma)
 
     # initialize left and right states assuming 1st spatial order
     rhoL, rhoR = splitScalar(rho)
@@ -66,17 +130,16 @@ def RiemannGP(U, gamma, deltax, zTL, zTR, Rstencil) :
     PL, PR     = splitScalar(P)
 
     for j in range(Rstencil, nFaces-Rstencil) :
-        U_stencilL = U[:,j-Rstencil:j+Rstencil+1]
-        U_stencilR = U[:,j-Rstencil+1:j+Rstencil+2]
-        rhoL[j] = reconstructGP(zTR, U_stencilL, 0)
-        rhoR[j] = reconstructGP(zTL, U_stencilR, 0)
-        vL[j]   = reconstructGP(zTR, U_stencilL, 1)
-        vR[j]   = reconstructGP(zTL, U_stencilR, 1)
-        PL[j]   = reconstructGP(zTR, U_stencilL, 2)
-        PR[j]   = reconstructGP(zTL, U_stencilR, 2)
-        if (j==50) :
+        U_stencilL = Ucopy[:,j-Rstencil:j+Rstencil+1]
+        U_stencilR = Ucopy[:,j-Rstencil+1:j+Rstencil+2]
+        rhoL[j], vL[j], PL[j] = reconstructGP(zTR, U_stencilL, gamma)
+        rhoR[j], vR[j], PR[j] = reconstructGP(zTL, U_stencilR, gamma)
+        '''
+        if (j==50) : # nFaces-Rstencil-1) :
             print ' rho L R:',rhoL[j],rhoR[j]
-
+            print ' vel L R:',vL[j],vR[j]
+            print ' P   L R:',PL[j],PR[j]
+        '''
     # remake U and Fcent with reconstructed variables
     UL = buildU3(rhoL, vL, PL, gamma)
     UR = buildU3(rhoR, vR, PR, gamma)
@@ -92,7 +155,7 @@ def RiemannGP(U, gamma, deltax, zTL, zTR, Rstencil) :
     lambdaP_R = vR + cR
     lambdaM_L = vL - cL
     lambdaM_R = vR - cR
-    alphaP = max3( lambdaP_L, lambdaP_R )
+    alphaP = max3(  lambdaP_L,  lambdaP_R )
     alphaM = max3( -lambdaM_L, -lambdaM_R )
     alphaMax = np.maximum( alphaP.max(), alphaM.max() )
 
@@ -186,24 +249,26 @@ def Riemann(U, gamma, deltax) :
 
     return L, alphaMax
 
-def resetGhosts(U) :
+def resetGhosts(U, Nghosts, periodic=False) :
     length = U.shape[1]
 
-    U[0,1] =  U[0,2]
-    U[1,1] = -U[1,2]
-    U[2,1] =  U[2,2]
+    if (periodic) :
+        for j in range(0,Nghosts) :
+            for k in range(0,3) :
+                U[k,j] = U[k,length-2*Nghosts+j]
+                #print 'copying cell',length-2*Nghosts+j,'into cell',j
+        for j in range(1,Nghosts+1) :
+            for k in range(0,3) :
+                U[k,length-j] = U[k,2*Nghosts-j]
+                #print 'copying cell',2*Nghosts-j,'into cell',length-j
 
-    U[0,length-2] =  U[0,length-3]
-    U[1,length-2] = -U[1,length-3]
-    U[2,length-2] =  U[2,length-3]
-
-    U[0,0] =  U[0,3]
-    U[1,0] = -U[1,3]
-    U[2,0] =  U[2,3]
-
-    U[0,length-1] =  U[0,length-4]
-    U[1,length-1] = -U[1,length-4]
-    U[2,length-1] =  U[2,length-4]
+    else : # reflective
+        for j in range(0,Nghosts) :
+            for k in range(0,3) :
+                U[k,j] = U[k,2*Nghosts-1-j]
+        for j in range(1,Nghosts+1) :
+            for k in range(0,3) :
+                U[k,length-j] = U[k,length-2*Nghosts-1+j]
 
     return U
 
